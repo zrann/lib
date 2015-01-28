@@ -1,0 +1,209 @@
+% THIS IS SIGPROC-SP.TEX - VERSION 3.1
+% WORKS WITH V3.2SP OF ACM_PROC_ARTICLE-SP.CLS
+% APRIL 2009
+%
+% It is an example file showing how to use the 'acm_proc_article-sp.cls' V3.2SP
+% LaTeX2e document class file for Conference Proceedings submissions.
+% ----------------------------------------------------------------------------------------------------------------
+% This .tex file (and associated .cls V3.2SP) *DOES NOT* produce:
+%       1) The Permission Statement
+%       2) The Conference (location) Info information
+%       3) The Copyright Line with ACM data
+%       4) Page numbering
+% ---------------------------------------------------------------------------------------------------------------
+% It is an example which *does* use the .bib file (from which the .bbl file
+% is produced).
+% REMEMBER HOWEVER: After having produced the .bbl file,
+% and prior to final submission,
+% you need to 'insert'  your .bbl file into your source .tex file so as to provide
+% ONE 'self-contained' source file.
+%
+% Questions regarding SIGS should be sent to
+% Adrienne Griscti ---> griscti@acm.org
+%
+% Questions/suggestions regarding the guidelines, .tex and .cls files, etc. to
+% Gerald Murray ---> murray@hq.acm.org
+%
+% For tracking purposes - this is V3.1SP - APRIL 2009
+
+
+
+\documentclass{acm_proc_article-sp}
+\usepackage{graphicx}
+\begin{document}
+
+\title{Caching Compact Snippet in Flash-based Search Engines}
+%\subtitle{[Extended Abstract]
+%\titlenote{A full version of this paper is available as
+%\textit{Author's Guide to Preparing ACM SIG Proceedings Using
+%\LaTeX$2_\epsilon$\ and BibTeX} at
+%\texttt{www.acm.org/eaddress.htm}}}
+%
+% You need the command \numberofauthors to handle the 'placement
+% and alignment' of the authors beneath the title.
+%
+% For aesthetic reasons, we recommend 'three authors at a time'
+% i.e. three 'name/affiliation blocks' be placed beneath the title.
+%
+% NOTE: You are NOT restricted in how many 'rows' of
+% "name/affiliations" may appear. We just ask that you restrict
+% the number of 'columns' to three.
+%
+% Because of the available 'opening page real-estate'
+% we ask you to refrain from putting more than six authors
+% (two rows with three columns) beneath the article title.
+% More than six makes the first-page appear very cluttered indeed.
+%
+% Use the \alignauthor commands to handle the names
+% and affiliations for an 'aesthetic maximum' of six authors.
+% Add names, affiliations, addresses for
+% the seventh etc. author(s) as the argument for the
+% \additionalauthors command.
+% These 'additional authors' will be output/set for you
+% without further effort on your part as the last section in
+% the body of your article BEFORE References or any Appendices.
+
+\numberofauthors{5} %  in this sample file, there are a *total*
+% of EIGHT authors. SIX appear on the 'first-page' (for formatting
+% reasons) and the remaining two appear in the \additionalauthors section.
+%
+\author{
+% You can go ahead and credit any number of authors here,
+% e.g. one 'row of three' or two rows (consisting of one row of three
+% and a second row of one, two or three).
+%
+% The command \alignauthor (no curly braces needed) should
+% precede each author name, affiliation/snail-mail address and
+% e-mail address. Additionally, tag each line of
+% affiliation/address with \affaddr, and tag the
+% e-mail address with \email.
+%
+% 1st. author
+\alignauthor
+%\titlenote{}\\
+\alignauthor\\
+       \affaddr{}\\
+       \affaddr{}\\
+       \affaddr{}\\
+       \email{}
+% 2nd. author
+\alignauthor
+%\titlenote{}\\
+\alignauthor\\
+       \affaddr{}\\
+       \affaddr{}\\
+       \affaddr{}\\
+       \email{}
+% 3rd. author
+\alignauthor
+%\titlenote{}\\
+\alignauthor\\
+       \affaddr{}\\
+       \affaddr{}\\
+       \affaddr{}\\
+       \email{}
+\and  % use '\and' if you need 'another row' of author names
+% 4th. author
+\alignauthor
+%\titlenote{}\\
+\alignauthor\\
+       \affaddr{}\\
+       \affaddr{}\\
+       \email{}
+% 5th. author
+\alignauthor
+%\titlenote{}\\
+\alignauthor\\
+       \affaddr{}\\
+       \affaddr{}\\
+       \affaddr{}\\
+       \email{}
+}
+% There's nothing stopping you putting the seventh, eighth, etc.
+% author on the opening page (as the 'third row') but we ask,
+% for aesthetic reasons that you place these 'additional authors'
+% in the \additional authors block, viz.
+
+
+\maketitle
+\begin{abstract}
+Modern search engine answers billions of queries per day. For each query, search engine returns top-$k$ relevant results, each of which contains a small piece of text, called snippet, extracted from the corresponding document. It is very expensive to obtain a snippet because it requires both document retrieval (disk access) and string matching (CPU computation). Therefore, in order to alleviate the query latency, frequently requested documents and snippets are cached.
+
+Recent studies showed that, however, with the trend of using solid state drive to replace hard disk drive, the bottleneck of snippet generation shifts from I/O to computation. Such finding suggests that it is crucial to improve the effectiveness of snippet caching approaches. In this paper, we propose new data structures to compactly represent the snippet and document; the new data structures allow more snippets or documents to be held within the same amount of cache space whatever caching policy is used. The experimental results show that our compact structures cooperate well with both static and dynamic cache strategies, and can improve the performance of small-scale search engines. Besides, it is worth noticing that our method does not affect the quality of snippets generated.
+\end{abstract}
+
+% A category with the (minimum) three required fields
+\category{H.3.3}{Information Storage and Retrieval}{Information
+Search and Retrieval-Search process}
+%A category including the fourth, optional field follows...
+%鈥︹€category{D.2.8}{Software Engineering}{Metrics}[complexity measures, performance measures]
+
+%\terms{Theory}
+
+\keywords{Cache, Snippet, Solid State Drive} % NOT required for Proceedings
+
+\section{Introduction}
+Caching is an imoportant approach to optimize the query latency in search engine architectures. A large-scale search engine typically consists of three sets of servers [2][5]: Web Servers, Index Servers and Document Servers. Web server, with a query result cache (QRC), interacts with users and coordinats the whole query processing. Index server matches top-\textit{k} documents that are most related to the query. Document server is responsible for generating query result pages, which include the title, URL, and a snippet for each of the  top-\textit{k} documents. A snippet is the portion of a document which matchs a query best. The query terms are highlighted in snippets. There are two in-memroy caches in document servers: Document Cache (DC) [10] and Snippet Cache (SC) [3]. The Document Cache (DC) stores document pages to save disk accesses when generating  snippets. The Snippet Cache (SC) stores snippets for top-\textit{k} documents to avoid repeated computation and disk access.
+
+Recently, solid state drive (SSD) has been extensively noticed to the public as secondary storage medium. Many companies begin to replace their hard disk drive (HDD) by SSD [11]. As SSD has properties such as fast read (ten times to one hundred times faster than HDD) and write [4], it can benefit the search engine for shorter query latency and higher throughput. Snippet generation[10], which is managed by document servers, is an expensive process in terms of both disk access and CPU computation. In traditional HDD-based search engine architectures, the latency of snippet processing is dominated by disk access operations. As SSD has the feature of faster read (especially random read), snippet calculation time becomes the bottleneck in snippet processing [11]. In this situation, the design of cache in document server has to shift the focus to avoiding  reduplicate computation.
+
+In this paper, we introduce a new form of snippet. During the snippet processing, we calculate the snippets in the standard way (without loss of quality), and reorganize the snippets utilizing the fact that snippet is a portion of document. With this new data structure, we can cache more calculation results in the limited memory space. Since the CPU time of snippet generation becomes the bottleneck of document server, this compact form of snippet will be more suitable for SSD-based search engine. The experimental results show that our method can achieve a good performance with both static and dynamic cache strategies.
+
+The contributions of our work include:
+
+%\vspace{-1em}
+\begin{itemize}
+  \item We propose a new data structure to record substrings in document: fragment. Fragment records the position of substrings in document. Referring to the document, storing fragment is more space-effective than storing strings directly. Fragment can be used as a compact form of snippet.
+  \item We introduce a new kind of snippet cache: fragment cache (FC). By using the compact snippet form, we can cache seven times or more snippets in the same amount of cache space and save more calculation cost. Besides, the overhead of recovering snippet from fragment and document is negligible.
+\end{itemize}
+
+
+\section{Related Work}
+Snippet processing is one of the most crucial and time-consuming process in document servers. The problem of reducing snippet processing latency has been studied from different directions. Liu et al. used CPU-GPU hybrid
+system to accelerate snippet generation [7]. Ceccarelli et al. introduced an effective method named supersnippet, but this method may degrade the accuracy of snippet [3]. Turpin et al. used zlib to compress document and reduced snippet generation latency by 58\% [10], their method can dramatically reduce I/O cost in HDD-based search engine. Tsegay et al. stored surrogates instead of the whole document to reduce I/O time [9].
+
+Once SSD is used to replace HDD, methods which reduce I/O time may not help. Wang et al. found that document
+cache, which may largely reduce I/O of document server, is not so effective in SSD-based search engine as it is in HDD-based search engine [11]. Similar to our study, Tong et al. also took advantage of the characteristic of SSD and introduced a latency-aware static list cache strategy which is tailored for SSD-based search engine [8]. Hoobin et al. provided RLZ compression algorithm which is suitable for compressing text [6] by considering the relative factorization of one text against other texts, which motivates our method. To the best of our knowledge, this is the first study that takes the advantage of features of SSD to improve the efficiency
+of snippet cache.
+\section{Fragment Cache}
+The using of SSD dramatically reduce the disk access cost in snippet processing. As a result, the CPU computation cost is playing a more important role in the snippet generation processing. And the designing of caches in document servers is supposed to take this change into consideration. In document servers, caching snippets, which can help refrain from repetitive computations, will be far more powerful in flash-based search engines.
+
+We introduce a new data structure called \textit{fragment} to record the information of snippets. We reorganize a snippet by considering the relative factorization of the snippet and the corresponding document (using documents as dictionary) to form a fragment. Namely, fragment is a compact form of snippet, which consists of the position information of a snippet. Caching fragments instead of the full snippets could reduce the size of cached items to a large extent, hence increasing the number of snippets in the cache and saving more computation cost.
+
+\begin{figure}
+  \centering
+  % Requires \usepackage{graphicx}
+  \includegraphics[width=3in]{figure1.pdf}\\
+  \caption{Snippet processing and fragment processing
+  }\label{Figure 1}
+\end{figure}
+
+
+Figure 1 shows the snippet processing and the fragment processing handled by document servers. The traditional snippet processing consists of two phases: document retrieval and snippet calculation. While the fragment processing has three steps: document retrieval, fragment calculation and snippet recovering. After a pair of query and document id is submitted to a document server, snippet cache is checked at first in the snippet processing. And a hit in snippet cache will save both the document retrieval and snippet calculation. In the case of fragment processing, we check fragment cache. Since only the position information of the snippet in a document is recorded in the fragment cache, a hit in fragment cache still needs the corresponding document to recover a full snippet. The recover operation simply extracts the substrings from a document and inserts the highlight labels by the position information recorded in the fragment. The overhead of recovering is low and can be neglected. As documents are used more frequently in the fragment processing, it may requires more document retrieval operations, which leads to more disk accesses. But SSD's faster read speed will offset this weakness and guarantee the good performance of fragment processing. More requirements of documents also makes the document cache more important than that in snippet processing.
+
+\begin{figure}[h]
+  \centering
+  % Requires \usepackage{graphicx}
+  \includegraphics[width=3in]{figure2-yinying.pdf}\\
+  \caption{Snippet structure
+  }\label{Figure 2}
+\end{figure}
+
+When calculating a fragment, we operate a standard query-biased snippet generation followed with a reorganization operation. The reorganization operation records where the snippet and highlighted terms locate in the document to form a fragment.Figure 2 shows the structure of a snippet, and the fragment of this snippet will be represented as
+\[
+<DocID, Frag_s, Frag_e, Highlight_s, Hignlight_e>
+\]
+\textit{DocID} records the document id of the corresponding document of the fragment. $Frag_s$ records the start offset of snippet in a document, and equals to \textit{offset}. $Frag_e$ is the end offset of the snippet, and equals to \textit{offset $+$ length}. $Highlight_s$ and $Highlight_e$ are two arraylists which hold one or more starting offsets and ending offsets of highlighted terms. In the example of Figure 2, $Highlight_s$ is recorded as $<\textit{offset}_1, \textit{offset}_2>$, and $Highlight_e$ is represented as $<\textit{offset}_1+length_1, \textit{offset}_2+length_2>$. This method of generating fragment is independent with snippet generation algorithms, hence snippet generated by any methods can be represented using such fragment form.
+
+In our sandbox search engine (we will describe the setting later), the average size of snippet is 375 Bytes while that of fragment is only 49 Bytes. By using fragment to represent snippet, seven times or more items can be held within the same amount of cache space, which will increase the cache hit ratio. Thus, more reduplicate CPU computation operations can be skipped.
+Nevertheless, due to the succinct representation of fragment, document accessing is required each time a snippet is requested even if the corresponding fragment is found in the fragment cache . Therefore, the I/O latency will increase substantially if these corresponding documents are not cached as well. However, it is worth noticing that these documents are also popular documents themselves. In fact they may already cached in document cache (otherwise they will be fetched from the disk at the very first cache miss and inevitably will reside in the document cache). So there are almost no overhead for recovering the snippet from the fragment. Furthermore, the memory saved by using fragment cache can be reserved for caching more popular documents, which in turn improve the performance.
+
+\section{Performance Evaluation}
+We evaluate our fragment cache by comparing its snippet generation latency with that of snippet cache. We test both static and dynamic cache strategies.
+\subsection{Experimental setup}
+In our experiments, we use a real collection of 12 million Web pages crawled by Sogou Labs\footnote{ http://www.sogou.com/labs/resources.html?v=1}. The experiments are performed by replaying real queries from Sogou search engine. The query log contains 2M queries. The first half is used as training set to warm the cache and the second half is used as test set. We deploy a Lucene\footnote{http://lucene.apache.org} based search engine, in which our fragment cache implementation is embedded. The server is a Intel Xeon E5645(@2 .4GHz) machine, with 12GB of main memory and Windows 7 SP1 installed. We carry out experiments on a 120GB OCZ Vertex-3 SSD. To verify the effectiveness of fragment cache on different storage mediums, we also perform some experiments on a 500GB WDC HDD (5400rpm).
+
+\subsection{Experimental results}
+\section{conclusion}
+\section{references}
+\end{document}
