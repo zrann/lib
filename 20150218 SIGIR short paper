@@ -33,99 +33,11 @@
 \begin{document}
 
 \title{Caching Compact Snippet in Flash-based Search Engines}
-%\subtitle{[Extended Abstract]
-%\titlenote{A full version of this paper is available as
-%\textit{Author's Guide to Preparing ACM SIG Proceedings Using
-%\LaTeX$2_\epsilon$\ and BibTeX} at
-%\texttt{www.acm.org/eaddress.htm}}}
-%
-% You need the command \numberofauthors to handle the 'placement
-% and alignment' of the authors beneath the title.
-%
-% For aesthetic reasons, we recommend 'three authors at a time'
-% i.e. three 'name/affiliation blocks' be placed beneath the title.
-%
-% NOTE: You are NOT restricted in how many 'rows' of
-% "name/affiliations" may appear. We just ask that you restrict
-% the number of 'columns' to three.
-%
-% Because of the available 'opening page real-estate'
-% we ask you to refrain from putting more than six authors
-% (two rows with three columns) beneath the article title.
-% More than six makes the first-page appear very cluttered indeed.
-%
-% Use the \alignauthor commands to handle the names
-% and affiliations for an 'aesthetic maximum' of six authors.
-% Add names, affiliations, addresses for
-% the seventh etc. author(s) as the argument for the
-% \additionalauthors command.
-% These 'additional authors' will be output/set for you
-% without further effort on your part as the last section in
-% the body of your article BEFORE References or any Appendices.
-
-\numberofauthors{5} %  in this sample file, there are a *total*
-% of EIGHT authors. SIX appear on the 'first-page' (for formatting
-% reasons) and the remaining two appear in the \additionalauthors section.
-%
 \author{
-% You can go ahead and credit any number of authors here,
-% e.g. one 'row of three' or two rows (consisting of one row of three
-% and a second row of one, two or three).
-%
-% The command \alignauthor (no curly braces needed) should
-% precede each author name, affiliation/snail-mail address and
-% e-mail address. Additionally, tag each line of
-% affiliation/address with \affaddr, and tag the
-% e-mail address with \email.
-%
-% 1st. author
-\alignauthor
-%\titlenote{}\\
-\alignauthor\\
-       \affaddr{}\\
-       \affaddr{}\\
-       \affaddr{}\\
-       \email{}
-% 2nd. author
-\alignauthor
-%\titlenote{}\\
-\alignauthor\\
-       \affaddr{}\\
-       \affaddr{}\\
-       \affaddr{}\\
-       \email{}
-% 3rd. author
-\alignauthor
-%\titlenote{}\\
-\alignauthor\\
-       \affaddr{}\\
-       \affaddr{}\\
-       \affaddr{}\\
-       \email{}
-\and  % use '\and' if you need 'another row' of author names
-% 4th. author
-\alignauthor
-%\titlenote{}\\
-\alignauthor\\
-       \affaddr{}\\
-       \affaddr{}\\
-       \email{}
-% 5th. author
-\alignauthor
-%\titlenote{}\\
-\alignauthor\\
-       \affaddr{}\\
-       \affaddr{}\\
-       \affaddr{}\\
-       \email{}
 }
-% There's nothing stopping you putting the seventh, eighth, etc.
-% author on the opening page (as the 'third row') but we ask,
-% for aesthetic reasons that you place these 'additional authors'
-% in the \additional authors block, viz.
-
 
 \maketitle
+
 \begin{abstract}
 Modern search engine answers billions of queries per day. For each query, search engine returns top-$k$ relevant results, each of which contains a small piece of text, called snippet, extracted from the corresponding document. It is very expensive to obtain a snippet because it requires both document retrieval (disk access) and string matching (CPU computation). Therefore, in order to alleviate the query latency, frequently requested documents and snippets are cached.
 
@@ -136,35 +48,32 @@ Recent studies showed that, however, with the trend of using solid state drive t
 \category{H.3.3}{Information Storage and Retrieval}{Information
 Search and Retrieval-Search process}
 %A category including the fourth, optional field follows...
-%鈥︹€category{D.2.8}{Software Engineering}{Metrics}[complexity measures, performance measures]
+%……\category{D.2.8}{Software Engineering}{Metrics}[complexity measures, performance measures]
 
 %\terms{Theory}
 
 \keywords{Cache, Snippet, Solid State Drive} % NOT required for Proceedings
 
 \section{Introduction}
-Caching is an imoportant approach to optimize the query latency in search engine architectures. A large-scale search engine typically consists of three sets of servers [2][5]: Web Servers, Index Servers and Document Servers. Web server, with a query result cache (QRC), interacts with users and coordinats the whole query processing. Index server matches top-\textit{k} documents that are most related to the query. Document server is responsible for generating query result pages, which include the title, URL, and a snippet for each of the  top-\textit{k} documents. A snippet is the portion of a document which matchs a query best. The query terms are highlighted in snippets. There are two in-memroy caches in document servers: Document Cache (DC) [10] and Snippet Cache (SC) [3]. The Document Cache (DC) stores document pages to save disk accesses when generating  snippets. The Snippet Cache (SC) stores snippets for top-\textit{k} documents to avoid repeated computation and disk access.
+Caching is an important approach to reduce the query latency in search engine architectures. A large-scale search engine typically consists of three sets of servers \cite{2,5}: Web Servers, Index Servers and Document Servers. Web server, with a query result cache (QRC), interacts with users and coordinates the whole query processing. Index server matches top-\textit{k} documents that are most related to the query. Document server is responsible for generating query result pages, which include the title, URL, and a snippet for each of the  top-\textit{k} documents. For a given query, a snippet is the portion of a document which matches the query best and the query terms are highlighted in snippets. In order to alleviate the query latency, frequently requested documents and snippets are cached. This two in-memory caches are called Document Cache (DC) \cite{10} and Snippet Cache (SC) \cite{3} respectively. The Document Cache (DC) stores document pages to save disk accesses when generating  snippets. The Snippet Cache (SC) stores snippets for top-\textit{k} documents to avoid repeated computation and disk access.
 
-Recently, solid state drive (SSD) has been extensively noticed to the public as secondary storage medium. Many companies begin to replace their hard disk drive (HDD) by SSD [11]. As SSD has properties such as fast read (ten times to one hundred times faster than HDD) and write [4], it can benefit the search engine for shorter query latency and higher throughput. Snippet generation[10], which is managed by document servers, is an expensive process in terms of both disk access and CPU computation. In traditional HDD-based search engine architectures, the latency of snippet processing is dominated by disk access operations. As SSD has the feature of faster read (especially random read), snippet calculation time becomes the bottleneck in snippet processing [11]. In this situation, the design of cache in document server has to shift the focus to avoiding  reduplicate computation.
+Recently, solid state drive (SSD) has been extensively noticed to the public as secondary storage medium. Many companies begin to replace their hard disk drive (HDD) by SSD \cite{11}. As SSD has properties such as fast read (ten times to one hundred times faster than HDD) and write \cite{4}, it can benefit the search engine for shorter query latency and higher throughput. Snippet generation \cite{10} is an expensive process in terms of both disk access and CPU computation. In traditional HDD-based search engine architectures, the latency of snippet processing is dominated by disk access operations. As SSD has the feature of faster read (especially random read), snippet calculation time becomes the bottleneck in snippet processing \cite{11}. In this situation, how to increase the efficiency of snippet caching for the sake of avoiding duplicate computation has becoming a more important problem.
 
-In this paper, we introduce a new form of snippet. During the snippet processing, we calculate the snippets in the standard way (without loss of quality), and reorganize the snippets utilizing the fact that snippet is a portion of document. With this new data structure, we can cache more calculation results in the limited memory space. Since the CPU time of snippet generation becomes the bottleneck of document server, this compact form of snippet will be more suitable for SSD-based search engine. The experimental results show that our method can achieve a good performance with both static and dynamic cache strategies.
+In this paper, instead of caching the full snippet, we introduce a new compact data structure to record snippet. During the snippet processing, we calculate the snippets in the standard way (without loss of quality), and reorganize the snippets utilizing the fact that snippet is a portion of document. With this new data structure, we can cache more calculation results in the limited memory space. Since the CPU time of snippet generation becomes the bottleneck of document server, this compact form of snippet will be more suitable for SSD-based search engine. The experimental results show that our method can achieve a good performance with both static and dynamic cache strategies.
 
 The contributions of our work include:
 
 %\vspace{-1em}
 \begin{itemize}
-  \item We propose a new data structure to record substrings in document: fragment. Fragment records the position of substrings in document. Referring to the document, storing fragment is more space-effective than storing strings directly. Fragment can be used as a compact form of snippet.
-  \item We introduce a new kind of snippet cache: fragment cache (FC). By using the compact snippet form, we can cache seven times or more snippets in the same amount of cache space and save more calculation cost. Besides, the overhead of recovering snippet from fragment and document is negligible.
+  \item We propose a new data structure, \textit{fragment}, to represent the snippet. Fragment represents the snippet by recording its offset and length in the document. Referring to the document, caching fragment is more space-effective than storing strings directly.
+  \item We introduce a new kind of query processing, \textit{fragment processing}, which uses fragment as a cached item instead of snippet (see Figure 2). During fragment processing, we can cache seven times or more snippets in the same amount of cache space and save more calculation cost. Besides, the overhead of recovering snippet from fragment and document is negligible.
 \end{itemize}
 
 
 \section{Related Work}
-Snippet processing is one of the most crucial and time-consuming process in document servers. The problem of reducing snippet processing latency has been studied from different directions. Liu et al. used CPU-GPU hybrid
-system to accelerate snippet generation [7]. Ceccarelli et al. introduced an effective method named supersnippet, but this method may degrade the accuracy of snippet [3]. Turpin et al. used zlib to compress document and reduced snippet generation latency by 58\% [10], their method can dramatically reduce I/O cost in HDD-based search engine. Tsegay et al. stored surrogates instead of the whole document to reduce I/O time [9].
+Snippet processing is one of the most crucial and time-consuming process in document servers. The problem of reducing snippet processing latency has been studied from different directions. Liu et al. used CPU-GPU hybrid system to accelerate snippet generation \cite{7}. Ceccarelli et al. introduced an effective method named supersnippet, but this method may degrade the accuracy of snippet \cite{3}. Turpin et al. used zlib to compress document and reduced snippet generation latency by 58\% \cite{10}, their method can dramatically reduce I/O cost in HDD-based search engine. Tsegay et al. stored surrogates instead of the whole document to reduce I/O time \cite{9}.
 
-Once SSD is used to replace HDD, methods which reduce I/O time may not help. Wang et al. found that document
-cache, which may largely reduce I/O of document server, is not so effective in SSD-based search engine as it is in HDD-based search engine [11]. Similar to our study, Tong et al. also took advantage of the characteristic of SSD and introduced a latency-aware static list cache strategy which is tailored for SSD-based search engine [8]. Hoobin et al. provided RLZ compression algorithm which is suitable for compressing text [6] by considering the relative factorization of one text against other texts, which motivates our method. To the best of our knowledge, this is the first study that takes the advantage of features of SSD to improve the efficiency
-of snippet cache.
+Once SSD is used to replace HDD, methods which reduce I/O time may not help. Wang et al. found that document cache, which may largely reduce I/O of document server, is not so effective in SSD-based search engine as it is in HDD-based search engine \cite{11}. Similar to our study, Tong et al. also took advantage of the characteristic of SSD and introduced a latency-aware static list cache strategy which is tailored for SSD-based search engine \cite{8}. Hoobin et al. provided RLZ compression algorithm which is suitable for compressing text \cite{6} by considering the relative factorization of one text against other texts, which motivates our method. To the best of our knowledge, this is the first study that takes the advantage of features of SSD to improve the efficiency of snippet cache.
 \section{Fragment Cache}
 The using of SSD dramatically reduce the disk access cost in snippet processing. As a result, the CPU computation cost is playing a more important role in the snippet generation processing. And the designing of caches in document servers is supposed to take this change into consideration. In document servers, caching snippets, which can help refrain from repetitive computations, will be far more powerful in flash-based search engines.
 
@@ -206,4 +115,8 @@ In our experiments, we use a real collection of 12 million Web pages crawled by 
 \subsection{Experimental results}
 \section{conclusion}
 \section{references}
+
+\bibliographystyle{abbrv}
+\bibliography{fc}
+
 \end{document}
