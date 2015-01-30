@@ -48,7 +48,7 @@ Recent studies showed that, however, with the trend of using solid state drive t
 \category{H.3.3}{Information Storage and Retrieval}{Information
 Search and Retrieval-Search process}
 %A category including the fourth, optional field follows...
-%……\category{D.2.8}{Software Engineering}{Metrics}[complexity measures, performance measures]
+%鈥︹€category{D.2.8}{Software Engineering}{Metrics}[complexity measures, performance measures]
 
 %\terms{Theory}
 
@@ -71,9 +71,9 @@ The contributions of our work include:
 
 
 \section{Related Work}
-Snippet processing is one of the most crucial and time-consuming process in document servers. The problem of reducing snippet processing latency has been studied from different directions. Liu et al. used CPU-GPU hybrid system to accelerate snippet generation \cite{7}. Ceccarelli et al. introduced an effective method named supersnippet, but this method may degrade the accuracy of snippet \cite{3}. Turpin et al. used zlib to compress document and reduced snippet generation latency by 58\% \cite{10}, their method can dramatically reduce I/O cost in HDD-based search engine. Tsegay et al. stored surrogates instead of the whole document to reduce I/O time \cite{9}.
+Snippet processing is one of the most crucial and time-consuming process in document servers. The problem of reducing snippet processing latency has been studied from different directions. Liu \textit{et al}. used CPU-GPU hybrid system to accelerate snippet generation \cite{7}. Ceccarelli \textit{et al}. introduced an effective method named supersnippet, but this method may degrade the accuracy of snippet \cite{3}. Turpin \textit{et al}. used zlib to compress document and reduced snippet generation latency by 58\% \cite{10}, their method can dramatically reduce I/O cost in HDD-based search engine. Tsegay \textit{et al}. stored surrogates instead of the whole document to reduce I/O time \cite{9}.
 
-Once SSD is used to replace HDD, methods which reduce I/O time may not help. Wang et al. found that document cache, which may largely reduce I/O of document server, is not so effective in SSD-based search engine as it is in HDD-based search engine \cite{11}. Similar to our study, Tong et al. also took advantage of the characteristic of SSD and introduced a latency-aware static list cache strategy which is tailored for SSD-based search engine \cite{8}. Hoobin et al. provided RLZ compression algorithm which is suitable for compressing text \cite{6} by considering the relative factorization of one text against other texts, which motivates our method. To the best of our knowledge, this is the first study that takes the advantage of features of SSD to improve the efficiency of snippet cache.
+Once SSD is used to replace HDD, methods which reduce I/O time may not help. Wang \textit{et al}. found that document cache, which may largely reduce I/O of document server, is not so effective in SSD-based search engine as it is in HDD-based search engine \cite{11}. Similar to our study, Tong \textit{et al}. also took advantage of the characteristic of SSD and introduced a latency-aware static list cache strategy which is tailored for SSD-based search engine \cite{8}. Hoobin \textit{et al}. provided RLZ compression algorithm which is suitable for compressing text \cite{6} by considering the relative factorization of one text against other texts, which motivates our method. To the best of our knowledge, this is the first study that takes the advantage of features of SSD to improve the efficiency of snippet cache.
 \section{Fragment Cache}
 The using of SSD dramatically reduce the disk access cost in snippet processing. As a result, the CPU computation cost is playing a more important role in the snippet generation processing. And the designing of caches in document servers is supposed to take this change into consideration. In document servers, caching snippets, which can help refrain from repetitive computations, will be far more powerful in flash-based search engines.
 
