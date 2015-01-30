@@ -14,19 +14,15 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Map.Entry;
 import java.util.PriorityQueue;
 import java.util.StringTokenizer;
 import java.util.Vector;
 
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.TokenStream;
-import org.apache.lucene.analysis.standard.StandardTokenizer;
 import org.apache.lucene.analysis.tokenattributes.TermAttribute;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.BooleanClause;
 import org.apache.lucene.search.BooleanQuery;
@@ -42,15 +38,12 @@ import org.apache.lucene.search.highlight.SimpleSpanFragmenter;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.IndexInput;
-import org.apache.lucene.util.Version;
 import org.wltea.analyzer.lucene.IKTokenizer;
 
 import preprocess.SortByFrequency;
 import preprocess.SortByFrequencyCostSize;
 import preprocess.SortByFrequencySize;
-import statistic.ComparetorByValue;
-import statistic.DocStatistic;
-import statistic.QueryStatistic;
+import statistic.SortByFCS;
 import statistic.StatisticNode;
 import util.Configure;
 import util.RAMEstimator;
@@ -60,6 +53,7 @@ import cache.CacheStrategy;
 import cache.CacheUtils;
 import cache.DynCA;
 import cache.DynFB;
+import cache.DynGDSFK;
 import cache.DynQTFDF;
 import cache.LFU;
 import cache.LRU;
@@ -82,11 +76,6 @@ public class Search {
 	public static double totalPostingListHitLength = 0.0f;
 	public static int totalNumOfPostingListHit = 0;
 	
-	public QueryStatistic qStat=new QueryStatistic();
-	public DocStatistic dStat=new DocStatistic();
-	public PriorityQueue<Entry<Object,StatisticNode>> pQueue=new PriorityQueue<Entry<Object,StatisticNode>>(11,new ComparetorByValue());
-	public HashMap<String,CacheNode<String,Snippet>> SnippetMap = new HashMap<String,CacheNode<String,Snippet>>();
-	static double ScDcMaxMemory_MB=512.0;
 //	public static Vector<String> hitStringVector = new Vector<String>();
 //
 //	// used for statistics of accessed documents and snippets
@@ -130,6 +119,21 @@ public class Search {
 	// query + docID
 	Cache<String, Snippet> snippetCache = null;
 	
+	//use for divide cache
+	//max size of the two caches in document server
+	static double CacheMaxMemory_MB=5;
+	// flag if it is in training:ture;if it is in testing: false
+	static boolean isTrain=true;
+	// statistic information
+	HashMap<String,StatisticNode<String>>SnippetMap= null;
+	HashMap<Integer,StatisticNode<Integer>>DocumentMap=null;
+	// record snippets in training phase
+	HashMap<String,Snippet>SnippetRecord=null;
+	// record snippets' corresponding documents
+	HashMap<String,Integer> SnippetToDoc=null;
+	// priority queue for documents and fragments
+	PriorityQueue<StatisticNode> pQueue=new PriorityQueue<StatisticNode>(11,new SortByFCS());
+	
 	// next, we maintain a priority queue for every type of cache
 	// for getting the historical usage info in the static cache
 //	ExternalHashMap<CacheNode<Query, List<Integer>>, Boolean> resultCachePriorityQ = null;
@@ -146,7 +150,6 @@ public class Search {
 		try {
 			this.inputParameters = inputParameters;
 			this.analyzer = Configure.SOUGOU_ANALYZER;
-//			this.analyzer = Configure.ODP_ANALYZER;
 			indexDirectory = FSDirectory.open(new File (inputParameters.indexPath));
 			searcher = new IndexSearcher(indexDirectory, true); // read-only=true
 			
@@ -162,90 +165,101 @@ public class Search {
 		if (inputParameters.memoryLimitMB() > 0 && inputParameters.resultCacheTurnOn){
 
 			if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.LRU))
-		    	resultCache = new LRU<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC,inputParameters.HashNumber_QRC);
-	    	else if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.LFU))
-		    	resultCache = new LFU<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC,inputParameters.HashNumber_QRC);
-	    	else if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.DynQTFDF))
-	    		resultCache = new DynQTFDF<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC,inputParameters.HashNumber_QRC);
-	    	else if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.DynCA))
-	    		resultCache = new DynCA<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC,inputParameters.HashNumber_QRC);
-	    	else if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.DynFB))
-	    		resultCache = new DynFB<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC,inputParameters.HashNumber_QRC);
-	    	else if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.StaQTF)){
-		    	resultCache = new StaticCache<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC,inputParameters.HashNumber_QRC);
-	    	} else if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.StaQTFDF)){
-	    		resultCache = new StaticCache<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC,inputParameters.HashNumber_QRC);
-	    	} else if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.StaCA)){
-		    	resultCache = new StaticCache<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC,inputParameters.HashNumber_QRC);
-	    	} else {
-	    		System.out.println("wrong result cache type specified !");
-	    		System.out.println(inputParameters.cacheStrategy_QRC);
-		    	System.exit(0);
-	    	}
+				resultCache = new LRU<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC);
+			else if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.LFU))
+				resultCache = new LFU<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC);
+			else if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.DynQTFDF))
+				resultCache = new DynQTFDF<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC);
+			else if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.DynCA))
+				resultCache = new DynCA<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC);
+			else if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.DynFB))
+				resultCache = new DynFB<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC);
+			else if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.StaQTF)){
+				resultCache = new StaticCache<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC);
+			} else if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.StaQTFDF)){
+				resultCache = new StaticCache<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC);
+			} else if (inputParameters.cacheStrategy_QRC.equalsIgnoreCase(CacheStrategy.StaCA)){
+				resultCache = new StaticCache<Query, List<Snippet>>(inputParameters.memoryLimitMB_QRC);
+			} else {
+				System.out.println("wrong result cache type specified !");
+				System.out.println(inputParameters.cacheStrategy_QRC);
+				System.exit(0);
+			}
 		}
 		
 		if (inputParameters.memoryLimitMB() > 0 && inputParameters.postingListCacheTurnOn){
 			
 			if (inputParameters.cacheStrategy_PLC.equalsIgnoreCase(CacheStrategy.LRU))
-		    	postingCache = new LRU<Term, IndexInput>(inputParameters.memoryLimitMB_PLC,inputParameters.HashNumber_PLC);
-	    	else if (inputParameters.cacheStrategy_PLC.equalsIgnoreCase(CacheStrategy.LFU))
-		    	postingCache = new LFU<Term, IndexInput>(inputParameters.memoryLimitMB_PLC,inputParameters.HashNumber_PLC);
-	    	else if (inputParameters.cacheStrategy_PLC.equalsIgnoreCase(CacheStrategy.DynQTFDF))
-		    	postingCache = new DynQTFDF<Term, IndexInput>(inputParameters.memoryLimitMB_PLC,inputParameters.HashNumber_PLC);
-	    	else if (inputParameters.cacheStrategy_PLC.equalsIgnoreCase(CacheStrategy.DynCA))
-		    	postingCache = new DynCA<Term, IndexInput>(inputParameters.memoryLimitMB_PLC,inputParameters.HashNumber_PLC);
-		    else if (inputParameters.cacheStrategy_PLC.equalsIgnoreCase(CacheStrategy.StaQTF)){
-	    		postingCache = new StaticCache<Term, IndexInput>(inputParameters.memoryLimitMB_PLC,inputParameters.HashNumber_PLC);
-		    } else if (inputParameters.cacheStrategy_PLC.equalsIgnoreCase(CacheStrategy.StaQTFDF)){
-		    	postingCache = new StaticCache<Term, IndexInput>(inputParameters.memoryLimitMB_PLC,inputParameters.HashNumber_PLC);
-	    	} else if (inputParameters.cacheStrategy_PLC.equalsIgnoreCase(CacheStrategy.StaCA)){
-	    		postingCache = new StaticCache<Term, IndexInput>(inputParameters.memoryLimitMB_PLC,inputParameters.HashNumber_PLC);
-	    	} else {
-		     	System.out.println("wrong posting list cache type specified !");
-		    	System.exit(0);
-	    	}
+				postingCache = new LRU<Term, IndexInput>(inputParameters.memoryLimitMB_PLC);
+			else if (inputParameters.cacheStrategy_PLC.equalsIgnoreCase(CacheStrategy.LFU))
+				postingCache = new LFU<Term, IndexInput>(inputParameters.memoryLimitMB_PLC);
+			else if (inputParameters.cacheStrategy_PLC.equalsIgnoreCase(CacheStrategy.DynQTFDF))
+				postingCache = new DynQTFDF<Term, IndexInput>(inputParameters.memoryLimitMB_PLC);
+			else if (inputParameters.cacheStrategy_PLC.equalsIgnoreCase(CacheStrategy.DynCA))
+				postingCache = new DynCA<Term, IndexInput>(inputParameters.memoryLimitMB_PLC);
+			else if (inputParameters.cacheStrategy_PLC.equalsIgnoreCase(CacheStrategy.StaQTF)){
+				postingCache = new StaticCache<Term, IndexInput>(inputParameters.memoryLimitMB_PLC);
+			} else if (inputParameters.cacheStrategy_PLC.equalsIgnoreCase(CacheStrategy.StaQTFDF)){
+				postingCache = new StaticCache<Term, IndexInput>(inputParameters.memoryLimitMB_PLC);
+			} else if (inputParameters.cacheStrategy_PLC.equalsIgnoreCase(CacheStrategy.StaCA)){
+				postingCache = new StaticCache<Term, IndexInput>(inputParameters.memoryLimitMB_PLC);
+			} else {
+				System.out.println("wrong posting list cache type specified !");
+				System.exit(0);
+			}
 		}
 		
 		if (inputParameters.memoryLimitMB() > 0 && inputParameters.documentCacheTurnOn){
 			if (inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.LRU))
-		    	documentCache = new LRU<Integer, Document>(inputParameters.memoryLimitMB_DC,inputParameters.HashNumber_DC);
-	    	else if (inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.LFU))
-		    	documentCache = new LFU<Integer, Document>(inputParameters.memoryLimitMB_DC,inputParameters.HashNumber_DC);
-	    	else if (inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.DynQTFDF))
-		    	documentCache = new DynQTFDF<Integer, Document>(inputParameters.memoryLimitMB_DC,inputParameters.HashNumber_DC);
-	    	else if (inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.DynCA))
-		    	documentCache = new DynCA<Integer, Document>(inputParameters.memoryLimitMB_DC,inputParameters.HashNumber_DC);
-	    	else if (inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.StaQTF)){
-		    	documentCache = new StaticCache<Integer, Document>(inputParameters.memoryLimitMB_DC,inputParameters.HashNumber_DC);
-	    	} else if (inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.StaQTFDF)){
-		    	documentCache = new StaticCache<Integer, Document>(inputParameters.memoryLimitMB_DC,inputParameters.HashNumber_DC);
-	    	} else if (inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.StaCA)){
-		    	documentCache = new StaticCache<Integer, Document>(inputParameters.memoryLimitMB_DC,inputParameters.HashNumber_DC);
-	    	} else {
-		    	System.out.println("wrong document cache type specified !");
-		    	System.exit(0);
-	    	}
+				documentCache = new LRU<Integer, Document>(inputParameters.memoryLimitMB_DC);
+			else if (inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.LFU))
+				documentCache = new LFU<Integer, Document>(inputParameters.memoryLimitMB_DC);
+			else if (inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.DynQTFDF))
+				documentCache = new DynQTFDF<Integer, Document>(inputParameters.memoryLimitMB_DC);
+			else if (inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.DynCA))
+				documentCache = new DynCA<Integer, Document>(inputParameters.memoryLimitMB_DC);
+			else if (inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.StaQTF)){
+				documentCache = new StaticCache<Integer, Document>(inputParameters.memoryLimitMB_DC);
+			} else if (inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.StaQTFDF)){
+				documentCache = new StaticCache<Integer, Document>(inputParameters.memoryLimitMB_DC);
+			} else if (inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.StaCA)){
+				documentCache = new StaticCache<Integer, Document>(inputParameters.memoryLimitMB_DC);
+			} else if (inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.DynGDSFK)){
+				documentCache = new DynGDSFK<Integer, Document>(inputParameters.memoryLimitMB_DC);
+			} else {
+				System.out.println("wrong document cache type specified !");
+				System.exit(0);
+			}
 		}
-		
 		if (inputParameters.memoryLimitMB() > 0 && inputParameters.snippetCacheTurnOn){
 			if (inputParameters.cacheStrategy_SC.equalsIgnoreCase(CacheStrategy.LRU))
-				snippetCache = new LRU<String, Snippet>(inputParameters.memoryLimitMB_SC,inputParameters.HashNumber_SC);
+				snippetCache = new LRU<String, Snippet>(inputParameters.memoryLimitMB_SC);
 			else if (inputParameters.cacheStrategy_SC.equalsIgnoreCase(CacheStrategy.LFU))
-				snippetCache = new LFU<String, Snippet>(inputParameters.memoryLimitMB_SC,inputParameters.HashNumber_SC);
+				snippetCache = new LFU<String, Snippet>(inputParameters.memoryLimitMB_SC);
 			else if (inputParameters.cacheStrategy_SC.equalsIgnoreCase(CacheStrategy.DynQTFDF))
-				snippetCache = new DynQTFDF<String, Snippet>(inputParameters.memoryLimitMB_SC,inputParameters.HashNumber_SC);
+				snippetCache = new DynQTFDF<String, Snippet>(inputParameters.memoryLimitMB_SC);
 			else if (inputParameters.cacheStrategy_SC.equalsIgnoreCase(CacheStrategy.DynCA))
-				snippetCache = new DynCA<String, Snippet>(inputParameters.memoryLimitMB_SC,inputParameters.HashNumber_SC);
+				snippetCache = new DynCA<String, Snippet>(inputParameters.memoryLimitMB_SC);
 			else if (inputParameters.cacheStrategy_SC.equalsIgnoreCase(CacheStrategy.StaQTF)){
-				snippetCache = new StaticCache<String, Snippet>(inputParameters.memoryLimitMB_SC,inputParameters.HashNumber_SC);
+				snippetCache = new StaticCache<String, Snippet>(inputParameters.memoryLimitMB_SC);
 			} else if (inputParameters.cacheStrategy_SC.equalsIgnoreCase(CacheStrategy.StaQTFDF)){
-				snippetCache = new StaticCache<String, Snippet>(inputParameters.memoryLimitMB_SC,inputParameters.HashNumber_SC);
+				snippetCache = new StaticCache<String, Snippet>(inputParameters.memoryLimitMB_SC);
 			} else if (inputParameters.cacheStrategy_SC.equalsIgnoreCase(CacheStrategy.StaCA)){
-				snippetCache = new StaticCache<String, Snippet>(inputParameters.memoryLimitMB_SC,inputParameters.HashNumber_SC);
-			} else {
+				snippetCache = new StaticCache<String, Snippet>(inputParameters.memoryLimitMB_SC);
+			} else if (inputParameters.cacheStrategy_SC.equalsIgnoreCase(CacheStrategy.DynGDSFK)){
+				snippetCache = new DynGDSFK<String, Snippet>(inputParameters.memoryLimitMB_SC);
+			}else {
 				System.out.println("wrong snippet cache type specified !");
 				System.exit(0);
 			}
+		}
+		if (inputParameters.memoryLimitMB() > 0 && inputParameters.documentCacheTurnOn
+				&& inputParameters.snippetCacheTurnOn){
+			this.SnippetMap=new HashMap<String,StatisticNode<String>>();
+			this.DocumentMap=new HashMap<Integer,StatisticNode<Integer>>();
+			this.SnippetRecord=new HashMap<String,Snippet>();
+			this.SnippetToDoc=new HashMap<String,Integer>();
+			PriorityQueue<StatisticNode> pQueue=new PriorityQueue<StatisticNode>(11,new SortByFCS());
 		}
 	}
 	
@@ -429,7 +443,7 @@ public class Search {
 			ArrayList<CacheNode> arrayList = new ArrayList<CacheNode>(documentCacheContent.values());
 			
 			// then sort the CacheNode by different strategies
-			/*Comparator<CacheNode> comparator = null;
+			Comparator<CacheNode> comparator = null;
 			if (this.inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.StaQTF))
 				comparator = new SortByFrequency();
 			else if (this.inputParameters.cacheStrategy_DC.equalsIgnoreCase(CacheStrategy.StaQTFDF))
@@ -439,7 +453,7 @@ public class Search {
 			
 			// note: all these comparators are min-heaps
 			// after sorting, arrayList[0] has the smallest value
-			Collections.sort(arrayList, comparator);*/
+			Collections.sort(arrayList, comparator);
 			
 			this.documentCache.destroy();
 			this.documentCache.setMemoryLimitMB(this.inputParameters.memoryLimitMB_DC);
@@ -458,7 +472,7 @@ public class Search {
 
 			ArrayList<CacheNode> arrayList = new ArrayList<CacheNode>(snippetCacheContent.values());
 			
-			/*// then sort the CacheNode by different strategies
+			// then sort the CacheNode by different strategies
 			Comparator<CacheNode> comparator = null;
 			if (this.inputParameters.cacheStrategy_SC.equalsIgnoreCase(CacheStrategy.StaQTF))
 				comparator = new SortByFrequency();
@@ -469,7 +483,7 @@ public class Search {
 			
 			// note: all these comparators are min-heaps
 			// after sorting, arrayList[0] has the smallest value
-			Collections.sort(arrayList, comparator);*/
+			Collections.sort(arrayList, comparator);
 			
 			this.snippetCache.destroy();
 			this.snippetCache.setMemoryLimitMB(this.inputParameters.memoryLimitMB_SC);
@@ -525,7 +539,7 @@ public class Search {
 		this.setMemoryLimit(true, false); // true means counting frequency, used in the training phrase
 		// false means NOT reset, i.e., set it as the unlimited memory
 		
-		runQueriesFromFile_train(trainingDataFilePath);
+		runQueriesFromFile(trainingDataFilePath);
 		
 		if (inputParameters.memoryLimitMB() > 0 && this.inputParameters.resultCacheTurnOn && this.inputParameters.isStaticCache(Configure.QRC_RESULT_CACHE)){
 			this.fillStaticCache(Configure.QRC_RESULT_CACHE);
@@ -542,6 +556,7 @@ public class Search {
 		if (inputParameters.memoryLimitMB() > 0 && this.inputParameters.snippetCacheTurnOn && this.inputParameters.isStaticCache(Configure.SC_SNIPPET_CACHE)){
 			this.fillStaticCache(Configure.SC_SNIPPET_CACHE);
 		}
+		
 	}
 	
 //	// only for static posting list cache training
@@ -601,7 +616,7 @@ public class Search {
 		this.outputMeasurement.startTime = currentTime;
 		
 		long startTime = System.nanoTime();
-		runQueriesFromFile_test(testingDataFilePath);
+		runQueriesFromFile(testingDataFilePath);
 		long endTime = System.nanoTime();
 		
 		currentTime = getCurrentTime();
@@ -613,17 +628,27 @@ public class Search {
 		double averageTime = totalTime / (double)outputMeasurement.numOfQueries;
 		this.outputMeasurement.averageTime = averageTime;
 		
-		if (inputParameters.memoryLimitMB() > 0 && inputParameters.resultCacheTurnOn)
+		if (inputParameters.memoryLimitMB() > 0 && inputParameters.resultCacheTurnOn){
 			this.outputMeasurement.resultCacheHitRatio = this.resultCache.getHitRatio();
+		    this.outputMeasurement.numOfQRCNodes=this.resultCache.cacheSize();
+    	    this.outputMeasurement.UsedMemoryOfQRC=this.resultCache.getUsedMemoryInCacheMB();
+		}
 	
 		if (inputParameters.memoryLimitMB() > 0 && inputParameters.postingListCacheTurnOn)
 			this.outputMeasurement.postingListCacheHitRatio = this.postingCache.getHitRatio();
 	
-		if (inputParameters.memoryLimitMB() > 0 && inputParameters.documentCacheTurnOn)
+		if (inputParameters.memoryLimitMB() > 0 && inputParameters.documentCacheTurnOn){
 			this.outputMeasurement.documentCacheHitRatio = this.documentCache.getHitRatio();
+			this.outputMeasurement.numOfDCNodes=this.documentCache.cacheSize();
+			this.outputMeasurement.UsedMemoryOfDC=this.documentCache.getUsedMemoryInCacheMB();
+		}
+			
 	
-		if (inputParameters.memoryLimitMB() > 0 && inputParameters.snippetCacheTurnOn)
+		if (inputParameters.memoryLimitMB() > 0 && inputParameters.snippetCacheTurnOn){
 			this.outputMeasurement.snippetCacheHitRatio = this.snippetCache.getHitRatio();
+			this.outputMeasurement.numOfSCNodes=this.snippetCache.cacheSize();
+			this.outputMeasurement.UsedMemoryOfSC=this.snippetCache.getUsedMemoryInCacheMB();
+		}
 	}
 	
 	// for testing use
@@ -644,12 +669,19 @@ public class Search {
                  
                 for (int i =    0; i < arrayList.size(); i ++){
                     CacheNode<Query, List<Snippet>> tempNode = arrayList.get(i);
+                    str.append("**************************************************"+"\n");
+                    str.append(tempNode.key + "\n");
                     List<Snippet> list = (List<Snippet>)tempNode.value;
+                    for(Snippet s:list){
+                    	str.append("titlt:"+s.getTitle()+"\n");
+                    	str.append("url:"+s.getUrl()+"\n");
+                    	str.append("Summarization:"+s.getSummarization()+"\n");
+                    }
                     int len = list.size();
                     totalLength += len;
                     totalNumOfBytes += tempNode.numOfBytes;
-                    str.append("**************************************************"+"\n");
-                    str.append(tempNode.key + "\t" + len + "\t" + tempNode.numOfBytes + "\t" + tempNode.frequency + "\n");
+                    
+                    str.append(len + "\t" + tempNode.numOfBytes + "\t" + tempNode.frequency + "\n");
                 }
             }
              
@@ -706,188 +738,109 @@ public class Search {
         }
     }
 	
-	// for testing use
-	private void printOutHitContent(){
-//		String fileName = this.generateOutpuFileName();
-////		fileName = "D:\\temp\\TEST_" + fileName;
-//		fileName = Configure.outputFileDirectory_Log + fileName;
-//		
-//		try{
-//			BufferedWriter writer = new BufferedWriter(new FileWriter(new File (fileName)));
-//			for (int i = 0; i < this.hitStringVector.size(); i ++){
-//				writer.write(hitStringVector.elementAt(i) + "\n");
-//			}
-//			
-//			writer.close();
-//		}catch(Exception e){
-//			e.printStackTrace();
-//		}
-	}
-	
-	// start searching
-	// warm the cache by the training data first
-	// then execute the queries in the testing data
-	void setDocStatistic() throws CorruptIndexException, IOException{
-		Document tempDoc = null;
-//		try {
-			for(int i = 0 ; i <=searcher.maxDoc();i++){
-				long t0 = System.nanoTime();
-				tempDoc = searcher.doc(i);
-				
-				long t1 = System.nanoTime();
-				double time = (double)(t1 - t0)/1000000000.0f;
-				
-				if(tempDoc != null){
-					StatisticNode ds=dStat.get(i);
-					if(ds==null){
-						StatisticNode tempStatNode=new StatisticNode(i,'d');
-						dStat.put(i,tempStatNode);
-						ds=dStat.get(i);
-					}
-					ds.size=RAMEstimator.INT_NUM_BYTE + RAMEstimator.getNumBytesOfDocument(tempDoc);
-					ds.cost=time;
-			//		System.out.println(ds.type);
-			//		System.out.println(ds.key);
-				}
-			//	else{System.out.println(i);}
-			}
-	//	} catch (IOException e) {
-			// TODO Auto-generated catch block
-	//		e.printStackTrace();
-	//	}
-	//	System.out.println("end set document Statistic");
-	}
-	public boolean ScandDcisFullplusOneNode(CacheNode node){
-		if (snippetCache.getUsedMemory_Byte() + documentCache.getUsedMemory_Byte()+ node.numOfBytes > (long) (ScDcMaxMemory_MB * RAMEstimator.ONE_MB))
+	public boolean CacheisFullplusOneNode(StatisticNode node){
+		if (snippetCache.getUsedMemory_Byte() + documentCache.getUsedMemory_Byte()
+				+ node.numOfBytes > (long) (CacheMaxMemory_MB * RAMEstimator.ONE_MB))
 			return true;
 		return false;
 	}
-	CacheNode<Integer, Document> getdCacheNodeByStatNode(StatisticNode stn){
-		CacheNode<Integer, Document> tempNode=null;
-		if(stn.type=='d'){
-			Document doc=this.getDocumentByID((Integer) stn.key);
-			int tempNumBytes = RAMEstimator.INT_NUM_BYTE + RAMEstimator.getNumBytesOfDocument(doc);
-			tempNode = new CacheNode<Integer, Document>((Integer) stn.key, doc, (int)tempNumBytes);
+	
+	//distribute document cache and snippet cache
+	void distributeCache(){
+		//put StatisticNode into priority queue
+		//document map
+		ArrayList<Integer> arrayList = new ArrayList<Integer>(DocumentMap.keySet());						
+		for (int i = 0; i < arrayList.size(); i ++){
+			StatisticNode<Integer> d=DocumentMap.get(arrayList.get(i));
+			if(d!=null){
+				pQueue.add(d);
+			}
+			
 		}
-		return tempNode;
-	}
-	void printOutqPQueue(PriorityQueue<Entry<Object,StatisticNode>> pQueue) throws IOException{
-		String fileName = "02_"+this.generateOutpuFileName();
-//		fileName = "D:\\temp\\TRAIN_" + fileName;
-		fileName = Configure.outputFileDirectory_Log + fileName;
-		StringBuffer str=new StringBuffer();
-		BufferedWriter writer = new BufferedWriter(new FileWriter(new File (fileName)));
-		while(!pQueue.isEmpty()) {
-            str.append(pQueue.poll() + "\n");
-        }
-		writer.write(str.toString());
-		writer.close();
-	}
-	void printOutdPQueue(PriorityQueue<Entry<Object,StatisticNode>> pQueue) throws IOException{
-		String fileName = "03_"+this.generateOutpuFileName();
-//		fileName = "D:\\temp\\TRAIN_" + fileName;
-		fileName = Configure.outputFileDirectory_Log + fileName;
-		StringBuffer str=new StringBuffer();
-		BufferedWriter writer = new BufferedWriter(new FileWriter(new File (fileName)));
-		while(!pQueue.isEmpty()) {
-            str.append(pQueue.poll() + "\n");
-        }
-		writer.write(str.toString());
-		writer.close();
-	}
-	public void distributeCache() throws IOException{
-	//	PriorityQueue<Entry<Object,StatisticNode>> qpQueue = new PriorityQueue<Entry<Object,StatisticNode>>(11,new ComparetorByValue());
-	//	PriorityQueue<Entry<Object,StatisticNode>> dpQueue = new PriorityQueue<Entry<Object,StatisticNode>>(11,new ComparetorByValue());
-		Iterator iter1 = qStat.queryStatistic.entrySet().iterator();
-		while (iter1.hasNext()) {
-			Entry<Object,StatisticNode> entry = (Entry) iter1.next();
-			/*Query q = (Query) entry.getKey();
-			StatisticNode sn = (StatisticNode) entry.getValue();*/
-	//		System.out.println("query to queue:"+entry.getValue().key.toString()+","+entry.getValue().frequency);
-			entry.getValue().frequency=entry.getValue().frequency-1;
-			pQueue.add(entry);
-	//		qpQueue.add(entry);
+		arrayList=null;
+		//snippet map
+		ArrayList<String> arrayList1 = new ArrayList<String>(SnippetMap.keySet());						
+		String key=null;
+		for (int i = 0; i < arrayList1.size(); i ++){
+			StatisticNode<String> s=SnippetMap.get(arrayList1.get(i));
+			if(s!=null){
+				pQueue.add(s);
+			}
+			
 		}
-	//	System.out.println("end add query to Queue");
-		Iterator iter2 = dStat.docStatistic.entrySet().iterator();
-		while (iter2.hasNext()) {
-			Entry<Object,StatisticNode> entry = (Entry) iter2.next();
-	/*		int q = (Integer) entry.getKey();
-			StatisticNode sn = (StatisticNode) entry.getValue();*/
-	//		System.out.println("doc to queue:"+entry.getValue().key+","+entry.getValue().frequency);
-			pQueue.add(entry);
-	//		dpQueue.add(entry);
-		}
-	//	printOutqPQueue(qpQueue);
-	//	printOutdPQueue(dpQueue);
-	//	System.out.println("end add document to Queue");
+		key=null;
+		arrayList1=null;
+		//then put these CacheNodes into caches
 		while(pQueue.size()>=5){
-		//	System.out.println("add 5 nodes to cache");
 			for(int i=0;i<5;i++){
-		//		System.out.println("add a node");
-	    		Entry<Object,StatisticNode> tempentry = pQueue.poll();
-	    		StatisticNode stn=tempentry.getValue();
-	    		if (stn.type=='d'){
-	    			CacheNode<Integer, Document> tempDoc=getdCacheNodeByStatNode(stn);
-	    			if(ScandDcisFullplusOneNode(tempDoc))break;
-	    			if (!ScandDcisFullplusOneNode(tempDoc)&&inputParameters.documentCacheTurnOn  && inputParameters.memoryLimitMB() > 0){
-	    //				System.out.println("doc to cache:"+tempDoc.key+","+tempDoc.frequency);
-	    				this.documentCache.put(tempDoc);
+				StatisticNode pNode = pQueue.poll();
+				if(pNode.type==0){
+					if(CacheisFullplusOneNode(pNode)){break;}
+					if(!CacheisFullplusOneNode(pNode)&&inputParameters.documentCacheTurnOn  
+							&& inputParameters.memoryLimitMB() > 0){
+						//put into DocumentCache
+						Document tempDoc=null;
+						try {
+							tempDoc = searcher.doc((Integer)pNode.key);
+						} catch (IOException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
+						assert tempDoc != null;
+						this.documentCache.put(new CacheNode<Integer,Document>((Integer)pNode.key,tempDoc,pNode.numOfBytes));		
+						tempDoc=null;
 					}
-	    		}
-	    		if (stn.type=='q'){
-	  //  			System.out.println("query to cache:"+stn.key.toString()+","+stn.frequency);
-	    			if(stn.docID!=-1){
-    					int docID=stn.docID;
-	    				String key= this.generateQueryBiasedSnippetKey((Query) stn.key, docID);
-	    				CacheNode<String, Snippet> tempSnip=SnippetMap.get(key);
-	    				if(ScandDcisFullplusOneNode(tempSnip))break;
-		    			if (!ScandDcisFullplusOneNode(tempSnip)&&inputParameters.snippetCacheTurnOn  && inputParameters.memoryLimitMB() > 0){
-//		    				System.out.println("query to cache:"+tempSnip.key+","+tempSnip.frequency);
-		    				this.snippetCache.put(tempSnip);
-							dStat.docStatistic.get(docID).frequency-=stn.frequency;
-    				    }
+				}
+				if(pNode.type==1){
+					if(CacheisFullplusOneNode(pNode)){break;}
+					if(!CacheisFullplusOneNode(pNode)&&inputParameters.snippetCacheTurnOn  
+							&& inputParameters.memoryLimitMB() > 0){
+						//put into SnippetCache
+						this.snippetCache.put(new CacheNode<String,Snippet>((String) pNode.key,SnippetRecord.get(pNode.key),pNode.numOfBytes));
+						int docID=this.SnippetToDoc.get(pNode.key);
+						if(this.documentCache.get(docID)==null){
+							if(this.DocumentMap.get(docID)!=null){
+								this.DocumentMap.get(docID).frequency-=pNode.frequency;
+							}	
+						}					
 					}
-	    			/*for(int j=0;j<stn.topK;j++){
-	    				
-	    			}*/
-	    		}
-	    	}
-			//uptate priorityQueue
-			Entry<Object,StatisticNode> entry = (Entry)dStat.docStatistic.entrySet().iterator().next();
-			pQueue.remove(entry);
-			pQueue.add(entry);
+				}
+				pNode=null;
+			}
+			//update pQueue
+			StatisticNode pn=pQueue.peek();
+			pQueue.remove(pn);
+			pQueue.add(pn);		
 		}
 		if(pQueue.size()>0){
 			while(!pQueue.isEmpty()){
-				Entry<Object,StatisticNode> tempentry = pQueue.poll();
-	    		StatisticNode stn=tempentry.getValue();
-	    		if (stn.type=='d'){
-	    			CacheNode<Integer, Document> tempDoc=getdCacheNodeByStatNode(stn);
-	    			if(ScandDcisFullplusOneNode(tempDoc))break;
-	    			if (!ScandDcisFullplusOneNode(tempDoc)&&inputParameters.documentCacheTurnOn  && inputParameters.memoryLimitMB() > 0){
-	 //   				System.out.println("doc to cache:"+tempDoc.key+","+tempDoc.frequency);
-	    				this.documentCache.put(tempDoc);
-					}
-	    		}
-	    		if (stn.type=='q'){
-	  //  			System.out.println("query to cache:"+stn.key.toString()+","+stn.frequency);
-	    			if(stn.docID!=-1){
-	    				int docID=stn.docID;
-	    				String key= this.generateQueryBiasedSnippetKey((Query) stn.key, docID);
-	    				CacheNode<String, Snippet> tempSnip=SnippetMap.get(key);
-	    				if(ScandDcisFullplusOneNode(tempSnip))break;
-		    			if (!ScandDcisFullplusOneNode(tempSnip)&&inputParameters.snippetCacheTurnOn  && inputParameters.memoryLimitMB() > 0){
-		//    				System.out.println("query to cache:"+tempSnip.key+","+tempSnip.frequency);
-		    				this.snippetCache.put(tempSnip);
-		//					dStat.docStatistic.get(docID).frequency--;
+				StatisticNode pNode = pQueue.poll();
+				if(pNode.type==0){
+					if(CacheisFullplusOneNode(pNode)){break;}
+					if(!CacheisFullplusOneNode(pNode)&&inputParameters.documentCacheTurnOn  
+							&& inputParameters.memoryLimitMB() > 0){
+						//put into DocumentCache
+						Document tempDoc=null;
+						try {
+							tempDoc = searcher.doc((Integer)pNode.key);
+						} catch (IOException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
 						}
-	    			}
-	    			
-	    			/*for(int j=0;j<stn.topK;j++){
-	    				
-	    			}*/
-	    		}
+						assert tempDoc != null;
+						this.documentCache.put(new CacheNode<Integer,Document>((Integer)pNode.key,tempDoc,pNode.numOfBytes));		
+						tempDoc=null;
+					}
+				}
+				if(pNode.type==1){
+					if(CacheisFullplusOneNode(pNode)){break;}
+					if(!CacheisFullplusOneNode(pNode)&&inputParameters.snippetCacheTurnOn  
+							&& inputParameters.memoryLimitMB() > 0){
+						//put into SnippetCache
+						this.snippetCache.put(new CacheNode<String,Snippet>((String) pNode.key,SnippetRecord.get(pNode.key),pNode.numOfBytes));			
+					}
+				}
+				pNode=null;
 			}
 		}
 		double SCSize=snippetCache.getUsedMemoryInCacheMB();
@@ -896,19 +849,24 @@ public class Search {
 		System.out.println("the memory size of DC (MB):"+DCSize+'\n');
 		outputMeasurement.SCSize=SCSize;
 		outputMeasurement.DCSize=DCSize;
+		this.DocumentMap=null;
+		this.SnippetMap=null;
+		this.SnippetToDoc=null;
+		this.SnippetRecord=null;
+		this.pQueue=null;
 	}
+	
+	// start searching
+	// warm the cache by the training data first
+	// then execute the queries in the testing data
 	public void queryStartEntry(){
 		
 		try {
 //			queryDocIDWriter = new BufferedWriter (new FileWriter (new File(Configure.QUERY_DOCID_TRAINING_WRITER_PATH)));
 			// step1: training
-	
-			this.setDocStatistic();
-//	        System.out.println("Start train:");
+			this.isTrain=true;
 			this.trainingPhrase();
-
-			this.distributeCache();
-
+			distributeCache();
 //			queryDocIDWriter.close();
 			
 			
@@ -918,8 +876,9 @@ public class Search {
 			resetCacheStatistics();	// clear the cache statistics
 			
 //			queryDocIDWriter = new BufferedWriter (new FileWriter (new File(Configure.QUERY_DOCID_TESTING_WRITER_PATH)));
-//			System.out.println("Start test:");
+
 			// step2: testing
+			this.isTrain=false;
 			this.testingPhrase();
 			
 			// print out the run time info
@@ -927,7 +886,7 @@ public class Search {
 			
 			this.closeSearch();
 			
-			printOutHitContent();
+//			printOutHitContent();
 			printOutHashMap();
 //			queryDocIDWriter.close();
 		} catch (Exception e) {
@@ -978,85 +937,7 @@ public class Search {
 	
 	// given a file, run all the queries in the file
 	// this can be used to training data (warm cache) and testing data
-/*	private void runQueriesFromFile_test(String queryLogFilePath){
-		try{
-			totalPostingListHitLength = 0.0f;
-			totalNumOfPostingListHit = 0;
-			
-			outputMeasurement.numOfQueries = 0;
-			BufferedReader reader = new BufferedReader(new FileReader(new File (queryLogFilePath)));
-			String line = "";
-			while (true) {
-				line = reader.readLine();
-				
-				if (line == null)	break;
-				//System.out.println(line);
-				StringTokenizer tokenizer; 
-				tokenizer = new StringTokenizer(line, "\t");
-				Vector<String> tempStrVec = new Vector<String>();
-				
-				while (tokenizer.hasMoreTokens()) {
-					tempStrVec.add(tokenizer.nextToken()); 
-				}
-				
-				if (tempStrVec.size() < 3)	continue;
-				
-				// then, get the query in tempStrVec[2]
-				String queryStr = tempStrVec.elementAt(2);
-				//System.out.println(queryStr);
-				if (queryStr == null) continue;
-				
-//				System.out.println(queryStr);
-				this.currentQueryStr = queryStr;
-				this.individualQuery_test(queryStr);
-				outputMeasurement.numOfQueries ++;
-//				if (outputMeasurement.numOfQueries % 1000 == 0)
-//					System.out.println(outputMeasurement.numOfQueries);
-			}
-		}catch(Exception e){
-			e.printStackTrace();
-		}
-	}*/
-	/*private void runQueriesFromFile_train(String queryLogFilePath){
-		try{
-			totalPostingListHitLength = 0.0f;
-			totalNumOfPostingListHit = 0;
-			
-			outputMeasurement.numOfQueries = 0;
-			BufferedReader reader = new BufferedReader(new FileReader(new File (queryLogFilePath)));
-			String line = "";
-			while (true) {
-				line = reader.readLine();
-				
-				if (line == null)	break;
-				//System.out.println(line);
-				StringTokenizer tokenizer; 
-				tokenizer = new StringTokenizer(line, "\t");
-				Vector<String> tempStrVec = new Vector<String>();
-				
-				while (tokenizer.hasMoreTokens()) {
-					tempStrVec.add(tokenizer.nextToken()); 
-				}
-				
-				if (tempStrVec.size() < 3)	continue;
-				
-				// then, get the query in tempStrVec[2]
-				String queryStr = tempStrVec.elementAt(2);
-				//System.out.println(queryStr);
-				if (queryStr == null) continue;
-				
-//				System.out.println(queryStr);
-				this.currentQueryStr = queryStr;
-				this.individualQuery_train(queryStr);
-				outputMeasurement.numOfQueries ++;
-//				if (outputMeasurement.numOfQueries % 1000 == 0)
-//					System.out.println(outputMeasurement.numOfQueries);
-			}
-		}catch(Exception e){
-			e.printStackTrace();
-		}
-	}*/
-	private void runQueriesFromFile_test(String queryLogFilePath){
+	private void runQueriesFromFile(String queryLogFilePath){
 		try{
 			totalPostingListHitLength = 0.0f;
 			totalNumOfPostingListHit = 0;
@@ -1090,59 +971,7 @@ public class Search {
 						}
 					}					
 					this.currentQueryStr = queryStr;
-					this.individualQuery_test(queryStr,topKDocIDs);
-					topKDocIDs=null;
-				}				
-				
-				outputMeasurement.numOfQueries ++;
-//				if (outputMeasurement.numOfQueries % 1000 == 0)
-//					System.out.println(outputMeasurement.numOfQueries);
-				tokenizer=null;
-				tempStrVec=null;
-				queryStr=null;
-			}
-			reader=null;
-			line=null;
-			
-		}catch(Exception e){
-			e.printStackTrace();
-		}
-	}
-	private void runQueriesFromFile_train(String queryLogFilePath){
-		try{
-			totalPostingListHitLength = 0.0f;
-			totalNumOfPostingListHit = 0;
-			
-			outputMeasurement.numOfQueries = 0;
-			BufferedReader reader = new BufferedReader(new FileReader(new File (queryLogFilePath)));
-			String line = "";
-			while (true) {
-				line = reader.readLine();
-				if (line == null)	break;
-				
-				StringTokenizer tokenizer; 
-				tokenizer = new StringTokenizer(line, "\t");
-				Vector<String> tempStrVec = new Vector<String>();
-				
-				while (tokenizer.hasMoreTokens()) {
-					tempStrVec.add(tokenizer.nextToken()); 
-				}
-				
-				if (tempStrVec.size() < 1)	continue;
-				
-				// then, get the query in tempStrVec[2]
-				String queryStr = tempStrVec.elementAt(0);
-				if (queryStr == null) continue;
-				if(tempStrVec.size()>=2){
-					List<Integer> topKDocIDs=new ArrayList<Integer>();
-					for(int i=1;i<tempStrVec.size();i++){			
-						if(tempStrVec.elementAt(i)!=null){
-						//	System.out.println(tempStrVec.elementAt(i));
-							topKDocIDs.add(Integer.parseInt(tempStrVec.elementAt(i)));
-						}
-					}					
-					this.currentQueryStr = queryStr;
-					this.individualQuery_train(queryStr,topKDocIDs);
+					this.individualQuery(queryStr,topKDocIDs);
 					topKDocIDs=null;
 				}				
 				
@@ -1168,7 +997,6 @@ public class Search {
 		long t1 = System.nanoTime();
 		Query query = new BooleanQuery();
 		IKTokenizer tokenizer = new IKTokenizer(new StringReader(queryStr) , false);
-	//	StandardTokenizer tokenizer =new StandardTokenizer(Version.LUCENE_30, new StringReader(queryStr) );
 		try {
 			while(tokenizer.incrementToken()){
 				TermAttribute termAtt = tokenizer.getAttribute(TermAttribute.class);
@@ -1187,7 +1015,7 @@ public class Search {
 	
 	// step2: generate snippets by docIDs and the query
 	// we can add snippet cache
-	private Snippet getSnippetsByDocIDAndQuery_test(int docID, Query query){
+	private Snippet getSnippetsByDocIDAndQuery(int docID, Query query){
 		Snippet tempSnippet = null;
 		try{
 			String key = this.generateQueryBiasedSnippetKey(query, docID);
@@ -1199,32 +1027,71 @@ public class Search {
 //				x ++;
 //				this.snipHitMap.put(key, x);
 //			}
-			
-			// check the snippet cache first
-			if (inputParameters.snippetCacheTurnOn  && inputParameters.memoryLimitMB() > 0)
-				tempSnippet = this.snippetCache.get(key);
-			
-			if (tempSnippet == null){
-				long t0 = System.nanoTime();
-				// cache miss, search it in normal way
-				if (tempSnippet == null){
-					Document document = this.getDocumentByID(docID);
-					tempSnippet = this.generateSnippet(document, query);
+			if(this.isTrain){
+				//check snippet record first
+				if (inputParameters.snippetCacheTurnOn  && inputParameters.memoryLimitMB() > 0){
+					tempSnippet = this.SnippetRecord.get(key);
+					if (tempSnippet != null){// this snippet has been recorded, increase frequency
+						this.SnippetMap.get(key).increaseFrequency();
+						this.DocumentMap.get(docID).increaseFrequency();
+					}
 				}
-				long t1 = System.nanoTime();
-				double time = (double)(t1 - t0)/1000000000.0f;
-				
-				assert tempSnippet != null;
+				if (tempSnippet == null){//this is a new snippet
+					long t0 = System.nanoTime();
+					// cache miss, search it in normal way
+					if (tempSnippet == null){
+						Document document = this.getDocumentByID(docID);
+						tempSnippet = this.generateSnippet(document, query);
+						document=null;
+					}
+					long t1 = System.nanoTime();
+					double time = (double)(t1 - t0)/1000000000.0f;
+					
+					assert tempSnippet != null;
 
-				// update snippet cache
-				/*if (this.inputParameters.snippetCacheTurnOn && this.inputParameters.memoryLimitMB() > 0){
-					int tempNumBytes = RAMEstimator.INT_NUM_BYTE + RAMEstimator.getNumBytesOfSnippet(tempSnippet);
-					//System.out.println(tempNumBytes);
-					CacheNode<String, Snippet> tempNode = new CacheNode<String, Snippet>(key, tempSnippet, tempNumBytes);
-					tempNode.cost = time;
-					this.snippetCache.put(tempNode);
-				}*/
+					// update snippet map, record, toDoc
+					if (this.inputParameters.snippetCacheTurnOn && this.inputParameters.memoryLimitMB() > 0){
+						int tempNumBytes = RAMEstimator.INT_NUM_BYTE + RAMEstimator.getNumBytesOfSnippet(tempSnippet);
+						//System.out.println(tempNumBytes);
+						StatisticNode<String> tempNode = new StatisticNode<String>(key, 1, tempNumBytes);
+						tempNode.cost = time;
+						this.SnippetMap.put(key,tempNode);
+						this.SnippetRecord.put(key, tempSnippet);
+						this.SnippetToDoc.put(key, docID);
+						tempNode=null;
+					}
+				}
 			}
+			else{
+				// check the snippet cache first
+				if (inputParameters.snippetCacheTurnOn  && inputParameters.memoryLimitMB() > 0)
+					tempSnippet = this.snippetCache.get(key);
+				
+				if (tempSnippet == null){
+					long t0 = System.nanoTime();
+					// cache miss, search it in normal way
+					if (tempSnippet == null){
+						Document document = this.getDocumentByID(docID);
+						tempSnippet = this.generateSnippet(document, query);
+						document=null;
+					}
+					long t1 = System.nanoTime();
+					double time = (double)(t1 - t0)/1000000000.0f;
+					
+					assert tempSnippet != null;
+
+					// update snippet cache
+					/*if (this.inputParameters.snippetCacheTurnOn && this.inputParameters.memoryLimitMB() > 0){
+						int tempNumBytes = RAMEstimator.INT_NUM_BYTE + RAMEstimator.getNumBytesOfSnippet(tempSnippet);
+						//System.out.println(tempNumBytes);
+						CacheNode<String, Snippet> tempNode = new CacheNode<String, Snippet>(key, tempSnippet, tempNumBytes);
+						tempNode.cost = time;
+						this.snippetCache.put(tempNode);
+						tempNode=null;
+					}*/
+				}
+			}			
+			key=null;
 		}catch(Exception e){
 			e.printStackTrace();
 		}
@@ -1240,72 +1107,7 @@ public class Search {
 			e.printStackTrace();
 		}*/
 		
-		/*outputMeasurement.totalSnippetLen+=RAMEstimator.INT_NUM_BYTE + RAMEstimator.getNumBytesOfSnippet(tempSnippet);
-		outputMeasurement.totalSnippetNum+=1;*/
 		
-		return tempSnippet;
-	}
-	private Snippet getSnippetsByDocIDAndQuery_train(int docID, Query query){
-		Snippet tempSnippet = null;
-		try{
-			String key = this.generateQueryBiasedSnippetKey(query, docID);
-			
-//			if (this.snipHitMap.get(key) == null){
-//				this.snipHitMap.put(key, 1);
-//			} else {
-//				int x= this.snipHitMap.get(key);
-//				x ++;
-//				this.snipHitMap.put(key, x);
-//			}
-			
-			// check the snippet cache first
-			if (inputParameters.snippetCacheTurnOn  && inputParameters.memoryLimitMB() > 0)
-				tempSnippet = this.snippetCache.get(key);
-			
-			if (tempSnippet == null){
-				long t0 = System.nanoTime();
-				// cache miss, search it in normal way
-				if (tempSnippet == null){
-					Document document = this.getDocumentByID(docID);
-					tempSnippet = this.generateSnippet(document, query);
-				}
-				long t1 = System.nanoTime();
-				double time = (double)(t1 - t0)/1000000000.0f;
-
-				assert tempSnippet != null;
-
-				// update snippet cache
-				int tempNumBytes = RAMEstimator.INT_NUM_BYTE + RAMEstimator.getNumBytesOfSnippet(tempSnippet);
-				//System.out.println(tempNumBytes);
-				CacheNode<String, Snippet> tempNode = new CacheNode<String, Snippet>(key, tempSnippet, tempNumBytes);
-				tempNode.cost = time;
-				if(this.SnippetMap.get(key)==null)this.SnippetMap.put(key,tempNode);
-				
-				/*if (this.inputParameters.snippetCacheTurnOn && this.inputParameters.memoryLimitMB() > 0){
-					int tempNumBytes = RAMEstimator.INT_NUM_BYTE + RAMEstimator.getNumBytesOfSnippet(tempSnippet);
-					//System.out.println(tempNumBytes);
-					CacheNode<String, Snippet> tempNode = new CacheNode<String, Snippet>(key, tempSnippet, tempNumBytes);
-					tempNode.cost = time;
-					this.snippetCache.put(tempNode);
-				}*/
-			}
-		}catch(Exception e){
-			e.printStackTrace();
-		}
-/*		try{
-			FileWriter writer = new FileWriter("E:\\WebExperiments\\Results\\snippet.txt",true);
-			writer.write(tempSnippet.getTitle()+"\n");
-			writer.write(tempSnippet.getUrl()+"\n");
-			writer.write(tempSnippet.getSummarization()+"\n");
-			writer.close();
-			
-		}
-		catch(IOException e){
-			e.printStackTrace();
-		}*/
-		
-		/*outputMeasurement.totalSnippetLen+=RAMEstimator.INT_NUM_BYTE + RAMEstimator.getNumBytesOfSnippet(tempSnippet);
-		outputMeasurement.totalSnippetNum+=1;*/
 		
 		return tempSnippet;
 	}
@@ -1316,77 +1118,15 @@ public class Search {
 double totalTime = (double)(endTime - startTime)/(double)1000000000.0f;	//seconds
 this.outputMeasurement.totalRunTime = totalTime;
 	 * @param queryStr
+	 * @throws IOException 
 	 */
-	/*private void individualQuery_test(String queryStr){
-		// parse query
-		Query query = parseQuery(queryStr);
-		long t1 = System.nanoTime();
-		
-		List<Snippet> topKResults = getQueryResults_test(query);
-		long t2 = System.nanoTime();
-		this.outputMeasurement.topKResultDocIDListTime += (double)(t2 - t1)/(double)1000000000.0f;	//seconds
-		 浠ヤ笅杩囨护query鏃剁敤.鍐欎笅鐨勬槸鑳藉鎼滅储鍒扮殑query
-		  if(topKResults.isEmpty()) ;//System.out.println(" ************ ++++++++++++++ ============= ");
-		else
-	    try {
-            //鎵撳紑涓�釜鍐欐枃浠跺櫒锛屾瀯閫犲嚱鏁颁腑鐨勭浜屼釜鍙傛暟true琛ㄧず浠ヨ拷鍔犲舰寮忓啓鏂囦欢
-		   BufferedWriter output = new BufferedWriter(new FileWriter(new File("D:\\aol_new.txt"),true));
-           //FileWriter writer = new FileWriter("D:\\aol_new.txt", true);
-           output.write(queryStr);
-           output.newLine(); 
-           output.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-		// display results to users
-	//	display(topKResults, queryStr, query);
-	}
 	// handle and forward an individual query
-	private void individualQuery_train(String queryStr){
+	private void individualQuery(String queryStr,List<Integer> topKDocIDs) throws IOException{
 		// parse query
 		Query query = parseQuery(queryStr);
 		long t1 = System.nanoTime();
 		
-		List<Snippet> topKResults = getQueryResults_train(query);
-		long t2 = System.nanoTime();
-		this.outputMeasurement.topKResultDocIDListTime += (double)(t2 - t1)/(double)1000000000.0f;	//seconds
-		 浠ヤ笅杩囨护query鏃剁敤.鍐欎笅鐨勬槸鑳藉鎼滅储鍒扮殑query
-		  if(topKResults.isEmpty()) ;//System.out.println(" ************ ++++++++++++++ ============= ");
-		else
-	    try {
-            //鎵撳紑涓�釜鍐欐枃浠跺櫒锛屾瀯閫犲嚱鏁颁腑鐨勭浜屼釜鍙傛暟true琛ㄧず浠ヨ拷鍔犲舰寮忓啓鏂囦欢
-		   BufferedWriter output = new BufferedWriter(new FileWriter(new File("D:\\aol_new.txt"),true));
-           //FileWriter writer = new FileWriter("D:\\aol_new.txt", true);
-           output.write(queryStr);
-           output.newLine(); 
-           output.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-		// display results to users
-	//	display(topKResults, queryStr, query);
-	}*/
-	private void individualQuery_train(String queryStr,List<Integer> topKDocIDs) throws IOException{
-		// parse query
-		Query query = parseQuery(queryStr);
-		long t1 = System.nanoTime();
-		
-		List<Snippet> topKResults = getQueryResults_train(query,topKDocIDs);
-		long t2 = System.nanoTime();
-		this.outputMeasurement.topKResultDocIDListTime += (double)(t2 - t1)/(double)1000000000.0f;	//seconds
-		
-		// display results to users
-//		display(topKResults, queryStr, query);
-//		outputResult(topKResults, queryStr, query);
-		query=null;
-		
-	}
-	private void individualQuery_test(String queryStr,List<Integer> topKDocIDs) throws IOException{
-		// parse query
-		Query query = parseQuery(queryStr);
-		long t1 = System.nanoTime();
-		
-		List<Snippet> topKResults = getQueryResults_test(query,topKDocIDs);
+		List<Snippet> topKResults = getQueryResults(query,topKDocIDs);
 		long t2 = System.nanoTime();
 		this.outputMeasurement.topKResultDocIDListTime += (double)(t2 - t1)/(double)1000000000.0f;	//seconds
 		
@@ -1404,7 +1144,7 @@ this.outputMeasurement.totalRunTime = totalTime;
 	
 	// input: query string
 	// output: top-k docID list
-	private List<Snippet> getQueryResults_test(Query query,List<Integer> topKDocs){
+	private List<Snippet> getQueryResults(Query query,List<Integer> topKDocIDs){
 		try{
 			List<Snippet> topKResults = null;
 
@@ -1415,152 +1155,23 @@ this.outputMeasurement.totalRunTime = totalTime;
 			// if cache miss, execute it as normal query
 			if (topKResults == null){
 				topKResults = new ArrayList<Snippet>();
-				
-				/*TopDocs tempResult;
-				long t0 = System.nanoTime();
-				try {
-					tempResult = searcher.search(query, Configure.TOPK_DISPLAY);
-				} catch (IOException e) {
-					tempResult = null;
-					e.printStackTrace();
-				}
-				long t1 = System.nanoTime();
-				double time = (double)(t1 - t0)/(double)1000000000.0f;
-				
-				assert tempResult != null;*/
-				
 				int numOfBytes_snippet = 0;
 				
 //				this.queryDocIDWriter.write(this.currentQueryStr);
 				
-				for (int docID : topKDocs){
+				for (int docID : topKDocIDs){
 					
 //					this.queryDocIDWriter.write("\t" + String.valueOf(docID));
 					
 					long t3 = System.nanoTime();
-					Snippet tempSnippet = this.getSnippetsByDocIDAndQuery_test(docID, query);
+					Snippet tempSnippet = this.getSnippetsByDocIDAndQuery(docID, query);
 					long t4 = System.nanoTime();
 					this.outputMeasurement.topKResultSnippetListTime += (double)(t4 - t3)/(double)1000000000.0f;
 					
 					numOfBytes_snippet += RAMEstimator.getNumBytesOfSnippet(tempSnippet);
 					topKResults.add(tempSnippet);
+					tempSnippet=null;
 				}
-//				this.queryDocIDWriter.write("\n");
-//				this.queryDocIDWriter.flush();
-
-				// update the result cache
-				/*if (inputParameters.resultCacheTurnOn  && inputParameters.memoryLimitMB() > 0 && topKResults.size() > 0){
-					// the result cache key takes 4 bytes
-					// the result cache value takes 4 * size() bytes
-					int tmepNumBytes = RAMEstimator.INT_NUM_BYTE + numOfBytes_snippet;
-					CacheNode<Query, List<Snippet>> tempNode = new CacheNode<Query, List<Snippet>>(query, topKResults, tmepNumBytes);
-					tempNode.cost = time;
-					this.resultCache.put(tempNode);
-				}*/
-			}
-			return topKResults;
-		} catch (Exception e){
-			e.printStackTrace();
-			return null;
-		}
-	}
-	private List<Snippet> getQueryResults_train(Query query,List<Integer> topKDocs){
-	/*//	System.out.println("Query:"+query+'\n');
-		StatisticNode qs=qStat.get(query);
-		if(qs==null){
-			StatisticNode tempStatNode=new StatisticNode(query,'q',Configure.TOPK_DISPLAY);
-			qStat.put(query, tempStatNode);
-			qs=qStat.get(query);
-	//		System.out.println("add query:"+query);
-		}
-		qs.frequency+=1;
-	//	System.out.println(qs.key+"query.fre+1:"+qs.frequency);
-*/		try{
-			List<Snippet> topKResults = null;
-
-			// check query result cache first
-			if (inputParameters.resultCacheTurnOn && inputParameters.memoryLimitMB() > 0)
-				topKResults = this.resultCache.get(query);
-			if(topKResults !=null){
-				/*TopDocs tempResult;
-				try {
-					tempResult = searcher.search(query, Configure.TOPK_DISPLAY);
-				} catch (IOException e) {
-					tempResult = null;
-					e.printStackTrace();
-				}*/
-				for (int docID : topKDocs){
-					String key = this.generateQueryBiasedSnippetKey(query, docID);
-					StatisticNode qs=qStat.get(key);
-					if(qs==null){
-						StatisticNode tempStatNode=new StatisticNode(query,'q',Configure.TOPK_DISPLAY);
-						qStat.put(key, tempStatNode);
-						qs=qStat.get(key);
-//						System.out.println("add query:"+query);			
-					}
-			        qs.frequency+=1;
-					qs.docID=docID;
-					StatisticNode ds=dStat.get(docID);
-					ds.frequency+=1;
-		//			System.out.println(ds.key+"doc.fre+1:"+ds.frequency);
-				}
-			}
-			
-			// if cache miss, execute it as normal query
-		//	if (topKResults == null){
-			else{
-				
-				topKResults = new ArrayList<Snippet>();
-				
-				/*TopDocs tempResult;
-				long t0 = System.nanoTime();
-				try {
-					tempResult = searcher.search(query, Configure.TOPK_DISPLAY);
-				} catch (IOException e) {
-					tempResult = null;
-					e.printStackTrace();
-				}
-				long t1 = System.nanoTime();
-				double time = (double)(t1 - t0)/(double)1000000000.0f;
-				
-				assert tempResult != null;*/
-//				qs.setDocID(tempResult);
-	//			System.out.println("set docId for query:"+query+qs.topKDocID);
-				int numOfBytes_snippet = 0;
-				
-//				this.queryDocIDWriter.write(this.currentQueryStr);
-//				double qscost=0;
-				for (int docID : topKDocs){
-					
-					String key = this.generateQueryBiasedSnippetKey(query, docID);
-					StatisticNode qs=qStat.get(key);
-					if(qs==null){
-						StatisticNode tempStatNode=new StatisticNode(query,'q',Configure.TOPK_DISPLAY);
-						qStat.put(key, tempStatNode);
-						qs=qStat.get(key);
-//						System.out.println("add query:"+query);			
-					}
-			        qs.frequency+=1;
-					qs.docID=docID;
-			        double qscost=0;
-					StatisticNode ds=dStat.get(docID);
-					ds.frequency+=1;
-	//				System.out.println(ds.key+"doc.fre+1:"+ds.frequency);
-//					this.queryDocIDWriter.write("\t" + String.valueOf(docID));
-					
-					long t3 = System.nanoTime();
-					Snippet tempSnippet = this.getSnippetsByDocIDAndQuery_train(docID, query);
-					long t4 = System.nanoTime();
-					double cost=(double)(t4 - t3)/(double)1000000000.0f;
-					this.outputMeasurement.topKResultSnippetListTime += cost;
-					qscost=cost;
-					numOfBytes_snippet += RAMEstimator.getNumBytesOfSnippet(tempSnippet);
-					if(qs.cost<qscost){qs.cost=qscost;}
-					qs.size=RAMEstimator.getNumBytesOfSnippet(tempSnippet)+RAMEstimator.INT_NUM_BYTE;
-					topKResults.add(tempSnippet);
-				}
-//				if(qs.cost<qscost){qs.cost=qscost;}
-//				qs.size=numOfBytes_snippet+RAMEstimator.INT_NUM_BYTE;
 //				this.queryDocIDWriter.write("\n");
 //				this.queryDocIDWriter.flush();
 
@@ -1570,10 +1181,11 @@ this.outputMeasurement.totalRunTime = totalTime;
 					// the result cache value takes 4 * size() bytes
 					int tmepNumBytes = RAMEstimator.INT_NUM_BYTE + numOfBytes_snippet;
 					CacheNode<Query, List<Snippet>> tempNode = new CacheNode<Query, List<Snippet>>(query, topKResults, tmepNumBytes);
-				//	tempNode.cost = time;
 					this.resultCache.put(tempNode);
+					tempNode=null;
 				}
 			}
+			
 			return topKResults;
 		} catch (Exception e){
 			e.printStackTrace();
@@ -1596,15 +1208,38 @@ this.outputMeasurement.totalRunTime = totalTime;
 //		}
 		
 		try{
+			if(this.isTrain){
+				if (inputParameters.documentCacheTurnOn  && inputParameters.memoryLimitMB() > 0){				
+					if(this.DocumentMap.get(docID)!=null){//this document has been recorded, increase frequency
+						tempDoc = searcher.doc(docID);
+						this.DocumentMap.get(docID).increaseFrequency();
+					}
+					else{//this is a new document update Document map
+						long t0 = System.nanoTime();
+						tempDoc = searcher.doc(docID);
+						long t1 = System.nanoTime();
+						double time = (double)(t1 - t0)/1000000000.0f;
+						int tempNumBytes = RAMEstimator.INT_NUM_BYTE + RAMEstimator.getNumBytesOfDocument(tempDoc);
+						StatisticNode<Integer> tempNode = new StatisticNode<Integer>(docID, 0, tempNumBytes);
+						tempNode.cost = time;
+						this.DocumentMap.put(docID, tempNode);
+						tempNode=null;					
+					}
+				}
+				else{
+					tempDoc = searcher.doc(docID);
+				}
+			}
+			else{
 				if (inputParameters.documentCacheTurnOn  && inputParameters.memoryLimitMB() > 0)
 					tempDoc = this.documentCache.get(docID);
 				
 				// cache miss
 				if (tempDoc == null){
-					tempDoc = searcher.doc(docID);
+					
 					
 					long t0 = System.nanoTime();
-					
+					tempDoc = searcher.doc(docID);
 					long t1 = System.nanoTime();
 					double time = (double)(t1 - t0)/1000000000.0f;
 					
@@ -1617,15 +1252,18 @@ this.outputMeasurement.totalRunTime = totalTime;
 						CacheNode<Integer, Document> tempNode = new CacheNode<Integer, Document>(docID, tempDoc, tempNumBytes);
 						tempNode.cost = time;
 						this.documentCache.put(tempNode);
+						tempNode=null;
 					}*/
 				}
+			}
+				
 		}catch(Exception e){
 			e.printStackTrace();
 			return null;
 		}
+		
 		return tempDoc;
 	}
-	
 	
 	// generate the query-biased snippet cache key
 	private String generateQueryBiasedSnippetKey(Query query, int docID){
@@ -1675,6 +1313,15 @@ this.outputMeasurement.totalRunTime = totalTime;
 		retSnippet.setUrl(url);
 		retSnippet.setTitle(title);
 		retSnippet.setSummarization(tempSummarization);
+		url=null;
+		title=null;
+		content=null;
+		tokenStream=null;
+		scorer=null;
+		fragmenter=null;
+		highlighter=null;
+		tempSummarization=null;
+		
 		return retSnippet;
 	}
 	
@@ -1693,7 +1340,26 @@ this.outputMeasurement.totalRunTime = totalTime;
 		
 		System.out.println("\n\n\n");
 	}
-	
+	private void outputResult(List<Snippet> topKResultSnippetList, String queryStr, Query innerQuery) throws IOException{
+		StringBuffer result=new StringBuffer();;
+		result.append("query string: " + queryStr+'\n');
+		result.append("inner query: " + innerQuery.toString()+'\n');
+		result.append("*************************************"+'\n');
+		
+		for (Snippet snippet: topKResultSnippetList){
+			result.append(snippet.getUrl()+'\n');
+			result.append(snippet.getTitle()+'\n');
+			result.append(snippet.getSummarization()+'\n');
+			result.append("*************************************"+'\n');
+		}
+		File f =new File("C:\\WebExperiments\\Results\\");
+		f.mkdir();
+		File f2 =new File("C:\\WebExperiments\\Results\\results.txt");
+		f2.createNewFile();
+		FileWriter write=new FileWriter(f2,true);
+		write.append(result);
+		write.close();
+	}
 
 	
 	// only one single type of cache exists
@@ -1724,10 +1390,8 @@ this.outputMeasurement.totalRunTime = totalTime;
 		
 		// specify SSD/HDD
 		Vector<String> indexPathVector = new Vector<String>();
-		if(Configure.isSSD)
 		indexPathVector.add(Configure.SOUGOU_SSD_INDEX_DIRECTORY);
-		else
-		indexPathVector.add(Configure.SOUGOU_HDD_INDEX_DIRECTORY);
+//		indexPathVector.add(Configure.SOUGOU_HDD_INDEX_DIRECTORY);
 
 		int numOfCombinations = 0;
 		// enumerate every possible combination
@@ -1763,12 +1427,12 @@ this.outputMeasurement.totalRunTime = totalTime;
 						// set logscale x = 4
 						memoryVectorMB.clear();
 						
-//						memoryVectorMB.add(16.0);
-//						memoryVectorMB.add(64.0);
-//						memoryVectorMB.add(256.0);
-//						memoryVectorMB.add(512.0);
+						memoryVectorMB.add(16.0);
+						memoryVectorMB.add(64.0);
+						memoryVectorMB.add(256.0);
+						memoryVectorMB.add(512.0);
 //						memoryVectorMB.add(1024.0);
-						memoryVectorMB.add(1024.0 * 2);
+//						memoryVectorMB.add(1024.0 * 2);
 //						memoryVectorMB.add(1024.0 * 3);
 //						memoryVectorMB.add(1024.0 * 4);
 						
@@ -1802,20 +1466,13 @@ this.outputMeasurement.totalRunTime = totalTime;
 						// SC
 						// set logscale x = 4
 						memoryVectorMB.clear();
-	//					memoryVectorMB.add(0.15);
-		//				memoryVectorMB.add(0.45);
-		//				memoryVectorMB.add(0.9);
-			//			memoryVectorMB.add(1.2);
-//						memoryVectorMB.add(1.5);
 //						memoryVectorMB.add(0.25);
 //						memoryVectorMB.add(0.5);
 //						memoryVectorMB.add(1.0);
-//						memoryVectorMB.add(2.5);
-	//					memoryVectorMB.add(4.5);
-		//				memoryVectorMB.add(8.5);
-	//					memoryVectorMB.add(4.0);
-//						memoryVectorMB.add(6.0);
-	//					memoryVectorMB.add(16.0);
+						memoryVectorMB.add(2.0);
+						memoryVectorMB.add(4.0);
+						memoryVectorMB.add(8.0);
+						memoryVectorMB.add(16.0);
 						memoryVectorMB.add(32.0);
 //						memoryVectorMB.add(64.0);
 //						memoryVectorMB.add(128.0);
@@ -1827,13 +1484,10 @@ this.outputMeasurement.totalRunTime = totalTime;
 					else {System.out.println("Wrong cache types specified! It can only from: QRC, PLC, DC and SC"); System.exit(0);}
 					
 					for (int indexCacheSize = 0; indexCacheSize < memoryVectorMB.size(); indexCacheSize ++){
-						inputParameters.postingListCacheTurnOn = true;
-						inputParameters.cacheStrategy_PLC = cacheStrategy;
-						inputParameters.memoryLimitMB_PLC = 2048;
 						double cacheSize = memoryVectorMB.elementAt(indexCacheSize);
 						if (cacheType.equalsIgnoreCase(Configure.QRC_RESULT_CACHE)) inputParameters.memoryLimitMB_QRC = cacheSize;
 						if (cacheType.equalsIgnoreCase(Configure.PLC_POSTINGLIST_CACHE)) inputParameters.memoryLimitMB_PLC = cacheSize;
-						if (cacheType.equalsIgnoreCase(Configure.SC_SNIPPET_CACHE)) inputParameters.memoryLimitMB_SC = cacheSize;inputParameters.HashNumber_SC=1000000;
+						if (cacheType.equalsIgnoreCase(Configure.SC_SNIPPET_CACHE)) inputParameters.memoryLimitMB_SC = cacheSize;
 						if (cacheType.equalsIgnoreCase(Configure.DC_DOCUMENT_CACHE)) inputParameters.memoryLimitMB_DC = cacheSize;
 						
 						Date   date   =   Calendar.getInstance().getTime(); 
@@ -1951,28 +1605,33 @@ this.outputMeasurement.totalRunTime = totalTime;
 
 		InputParameters inputParameters = new InputParameters();
 		
-		// un-changed
+		/*// un-changed
 		String cacheStrategy_QRC = CacheStrategy.LRU;
 		String cacheStrategy_PLC = CacheStrategy.LRU;
 		String cacheStrategy_DC = CacheStrategy.LRU;
-		String cacheStrategy_SC = CacheStrategy.LRU;
+		String cacheStrategy_SC = CacheStrategy.LRU;*/
+		Vector<String> cacheStrategyVector = new Vector<String>();
+		
+//		cacheStrategyVector.add(CacheStrategy.StaQTF);
+//		cacheStrategyVector.add(CacheStrategy.StaQTFDF);
+//		cacheStrategyVector.add(CacheStrategy.StaCA);
+//		cacheStrategyVector.add(CacheStrategy.LFU);
+//		cacheStrategyVector.add(CacheStrategy.DynQTFDF);
+		cacheStrategyVector.add(CacheStrategy.LRU);
+//		cacheStrategyVector.add(CacheStrategy.DynGDSFK);
+//		cacheStrategyVector.add(CacheStrategy.DynFB);
+//		cacheStrategyVector.add(CacheStrategy.DynCA);
 		
 		double memoryMB_QRC = 0;
 		double memoryMB_PLC = 0;
 		double memoryMB_SC = 0;
 		double memoryMB_DC = 0;
-		int HashNumber_QRC=16;
-		int HashNumber_PLC=16;
-		int HashNumber_SC=16;
-		int HashNumber_DC=16;
-		
 		
 		Vector<Double> memoryVectorMB = new Vector<Double>();
-		memoryVectorMB.clear();
-//		memoryVectorMB.add(0.0);
+		memoryVectorMB.add(0.0);
 //		memoryVectorMB.add(0.05);
 //		memoryVectorMB.add(0.1);
-		memoryVectorMB.add(0.2);
+//		memoryVectorMB.add(0.2);
 //		memoryVectorMB.add(0.3);
 //		memoryVectorMB.add(0.4);
 //		memoryVectorMB.add(0.5);
@@ -1981,92 +1640,90 @@ this.outputMeasurement.totalRunTime = totalTime;
 //		memoryVectorMB.add(0.8);
 //		memoryVectorMB.add(0.85);
 //		memoryVectorMB.add(0.9);
+//		memoryVectorMB.add(0.91);
 //		memoryVectorMB.add(0.95);
 //		memoryVectorMB.add(1.0);
 //		memoryVectorMB.add(2.0);
+//		memoryVectorMB.add(4.0);
 //		memoryVectorMB.add(8.0);
 //		memoryVectorMB.add(16.0);
 //		memoryVectorMB.add(32.0);
-//		memoryVectorMB.add(64.0);
-//		memoryVectorMB.add(128.0);
-//		memoryVectorMB.add(256.0);
-//		memoryVectorMB.add(512.0);
-//		memoryVectorMB.add(1024.0);
-		
-		double totalCacheSizeMB = 32.0;	// MB
+		double totalCacheSizeMB = 16.0;	// MB
 		
 		int numOfCombinations = 0;
 
-		for (int i = 0; i < memoryVectorMB.size(); i ++){
-			double x = memoryVectorMB.elementAt(i)*totalCacheSizeMB;
-			double y = totalCacheSizeMB - x;
 
-			memoryMB_QRC = 0;
-			HashNumber_QRC=16;
-			memoryMB_PLC = 0;
-			HashNumber_PLC=16;
-			memoryMB_SC = ScDcMaxMemory_MB;
-			HashNumber_SC=10000000;//18432;
-			memoryMB_DC = ScDcMaxMemory_MB;
-			HashNumber_DC=10000000;
-			
-//				memoryMB_QRC = x;
-//				memoryMB_PLC = y * 0.8;
-//				
-//				memoryMB_SC = y * 0.2 * 0.2;
-//				memoryMB_DC = y * 0.2 * 0.8;
-			
-			inputParameters = new InputParameters();
-			
-			boolean resultCacheTurnOn = false;	// enable the result cache
-			boolean postingListCacheTurnOn = false;
-			boolean documentCacheTurnOn = false;
-			boolean snippetCacheTurnOn = false;
-			
-			if (memoryMB_QRC > 0) resultCacheTurnOn = true;
-			if (memoryMB_PLC > 0) postingListCacheTurnOn = true;
-			if (memoryMB_SC > 0) snippetCacheTurnOn = true;
-			if (memoryMB_DC > 0) documentCacheTurnOn = true;
-			
-			if(Configure.isSSD)
-			inputParameters.indexPath = Configure.SOUGOU_SSD_INDEX_DIRECTORY;
-			else
-			inputParameters.indexPath = Configure.SOUGOU_HDD_INDEX_DIRECTORY;
+		for (int indexCacheStrategy = 0; indexCacheStrategy < cacheStrategyVector.size(); indexCacheStrategy ++){
+			String cacheStrategy = cacheStrategyVector.elementAt(indexCacheStrategy);		
+			inputParameters.resetCacheStrategy();
+			System.out.println(cacheStrategy);
+			String cacheStrategy_QRC = cacheStrategy;
+			String cacheStrategy_PLC = cacheStrategy;
+			String cacheStrategy_DC = cacheStrategy;
+			String cacheStrategy_SC = cacheStrategy;
+			String cacheStrategy_FC = cacheStrategy;
+			for (int i = 0; i < memoryVectorMB.size(); i ++){
+				double x = totalCacheSizeMB * memoryVectorMB.elementAt(i);
+				double y = totalCacheSizeMB - x;
 
-			inputParameters.resultCacheTurnOn = resultCacheTurnOn;
-			inputParameters.postingListCacheTurnOn = postingListCacheTurnOn;
-			inputParameters.snippetCacheTurnOn = snippetCacheTurnOn;
-			inputParameters.documentCacheTurnOn = documentCacheTurnOn;
-			
-			inputParameters.memoryLimitMB_QRC = memoryMB_QRC;
-			inputParameters.memoryLimitMB_PLC = memoryMB_PLC;
-			inputParameters.memoryLimitMB_DC = memoryMB_DC;
-			inputParameters.memoryLimitMB_SC = memoryMB_SC;
-			inputParameters.HashNumber_QRC=HashNumber_QRC;
-			inputParameters.HashNumber_PLC=HashNumber_PLC;
-			inputParameters.HashNumber_DC=HashNumber_DC;
-			inputParameters.HashNumber_SC=HashNumber_SC;
+				memoryMB_QRC = 0;
+				memoryMB_PLC = 0;
+				memoryMB_SC = CacheMaxMemory_MB;
+				memoryMB_DC = CacheMaxMemory_MB;
+				
+//					memoryMB_QRC = x;
+//					memoryMB_PLC = y * 0.8;
+//					
+//					memoryMB_SC = y * 0.2 * 0.2;
+//					memoryMB_DC = y * 0.2 * 0.8;
+				
+				inputParameters = new InputParameters();
+				
+				boolean resultCacheTurnOn = false;	// enable the result cache
+				boolean postingListCacheTurnOn = false;
+				boolean documentCacheTurnOn = false;
+				boolean snippetCacheTurnOn = false;
+				
+				if (memoryMB_QRC > 0) resultCacheTurnOn = true;
+				if (memoryMB_PLC > 0) postingListCacheTurnOn = true;
+				if (memoryMB_SC > 0) snippetCacheTurnOn = true;
+				if (memoryMB_DC > 0) documentCacheTurnOn = true;
+				
+				inputParameters.indexPath = Configure.SOUGOU_SSD_INDEX_DIRECTORY;
+//				inputParameters.indexPath = Configure.SOUGOU_HDD_INDEX_DIRECTORY;
 
-			inputParameters.cacheStrategy_QRC = cacheStrategy_QRC;
-			inputParameters.cacheStrategy_PLC = cacheStrategy_PLC;
-			inputParameters.cacheStrategy_DC = cacheStrategy_DC;
-			inputParameters.cacheStrategy_SC = cacheStrategy_SC;
-			
-			Date   date   =   Calendar.getInstance().getTime(); 
-	        SimpleDateFormat   sdf   =   new   SimpleDateFormat( "yyyy/MM/dd HH:mm:ss"); 
-	        String   sDate   =   sdf.format(date);
-	        System.out.println(sDate);
-			System.out.println(inputParameters.toString());
-			System.out.println(Search.testtesttest(inputParameters));
-			numOfCombinations ++;
-//			System.out.println(numOfCombinations + ":");
-	        System.out.println((numOfCombinations) + "-th / 6");
-			
-			Search obj = new Search(inputParameters);
-			obj.queryStartEntry();
-			
-			System.out.println("************************************\n\n");
+				inputParameters.resultCacheTurnOn = resultCacheTurnOn;
+				inputParameters.postingListCacheTurnOn = postingListCacheTurnOn;
+				inputParameters.snippetCacheTurnOn = snippetCacheTurnOn;
+				inputParameters.documentCacheTurnOn = documentCacheTurnOn;
+				
+				inputParameters.memoryLimitMB_QRC = memoryMB_QRC;
+				inputParameters.memoryLimitMB_PLC = memoryMB_PLC;
+				inputParameters.memoryLimitMB_DC = memoryMB_DC;
+				inputParameters.memoryLimitMB_SC = memoryMB_SC;
+
+				inputParameters.cacheStrategy_QRC = cacheStrategy_QRC;
+				inputParameters.cacheStrategy_PLC = cacheStrategy_PLC;
+				inputParameters.cacheStrategy_DC = cacheStrategy_DC;
+				inputParameters.cacheStrategy_SC = cacheStrategy_SC;
+				
+				Date   date   =   Calendar.getInstance().getTime(); 
+		        SimpleDateFormat   sdf   =   new   SimpleDateFormat( "yyyy/MM/dd HH:mm:ss"); 
+		        String   sDate   =   sdf.format(date);
+		        System.out.println(sDate);
+				System.out.println(inputParameters.toString());
+				System.out.println(Search.testtesttest(inputParameters));
+				numOfCombinations ++;
+//				System.out.println(numOfCombinations + ":");
+		        System.out.println((numOfCombinations) + "-th / 6");
+				
+				Search obj = new Search(inputParameters);
+				obj.queryStartEntry();
+				
+				System.out.println("************************************\n\n");
+			}
 		}
+		
 	}
 
 	
