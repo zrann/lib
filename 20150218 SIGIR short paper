@@ -82,37 +82,34 @@ Similar to our study, Tong \textit{et al}. \cite{8} also took advantage of the c
 the caching effectiveness in search engines, except that they only concerned list caching.
 
 \section{Fragment Cache}
-The using of SSD dramatically reduce the disk access cost in snippet processing. As a result, the CPU computation cost is playing a more important role in the snippet generation processing. And the designing of caches in document servers is supposed to take this change into consideration. In document servers, caching snippets, which can help refrain from repetitive computations, will be far more powerful in flash-based search engines.
-
-We introduce a new data structure called \textit{fragment} to record the information of snippets. We reorganize a snippet by considering the relative factorization of the snippet and the corresponding document (using documents as dictionary) to form a fragment. Namely, fragment is a compact form of snippet, which consists of the position information of a snippet. Caching fragments instead of the full snippets could reduce the size of cached items to a large extent, hence increasing the number of snippets in the cache and saving more computation cost.
-
-\begin{figure}
-  \centering
-  % Requires \usepackage{graphicx}
-  \includegraphics[width=3in]{figure1.pdf}\\
-  \caption{Snippet processing and fragment processing
-  }\label{Figure 1}
-\end{figure}
-
-
-Figure 1 shows the snippet processing and the fragment processing handled by document servers. The traditional snippet processing consists of two phases: document retrieval and snippet calculation. While the fragment processing has three steps: document retrieval, fragment calculation and snippet recovering. After a pair of query and document id is submitted to a document server, snippet cache is checked at first in the snippet processing. And a hit in snippet cache will save both the document retrieval and snippet calculation. In the case of fragment processing, we check fragment cache. Since only the position information of the snippet in a document is recorded in the fragment cache, a hit in fragment cache still needs the corresponding document to recover a full snippet. The recover operation simply extracts the substrings from a document and inserts the highlight labels by the position information recorded in the fragment. The overhead of recovering is low and can be neglected. As documents are used more frequently in the fragment processing, it may requires more document retrieval operations, which leads to more disk accesses. But SSD's faster read speed will offset this weakness and guarantee the good performance of fragment processing. More requirements of documents also makes the document cache more important than that in snippet processing.
+The using of SSD dramatically reduce the disk accessing cost of snippet processing. As a result, the CPU computation cost is playing a more important role in the snippet generation processing. Thus the designing of caches in document servers is supposed to take this change into consideration. In document servers, caching snippets, which can help refrain from repetitive computations, will be far more powerful in flash-based search engines.
 
 \begin{figure}[h]
   \centering
   % Requires \usepackage{graphicx}
   \includegraphics[width=3in]{figure2-yinying.pdf}\\
   \caption{Snippet structure
-  }\label{Figure 2}
+  }\label{Figure 1}
 \end{figure}
 
-When calculating a fragment, we operate a standard query-biased snippet generation followed with a reorganization operation. The reorganization operation records where the snippet and highlighted terms locate in the document to form a fragment.Figure 2 shows the structure of a snippet, and the fragment of this snippet will be represented as
+We introduce a new data structure called \textit{fragment} to record the information of snippets. We reorganize a snippet by considering the relative factorization of the snippet and the corresponding document to form a fragment, as shown in Figure 1. Namely, fragment is a compact form of snippet, which consists of the position information of a snippet. When calculating a fragment, we operate a standard query-biased snippet generation followed with a reorganization operation. The reorganization operation records where the snippet and highlighted terms locate in the document to form a fragment. Figure 1 shows the structure of a snippet, and the fragment of this snippet will be represented as
 \[
 <DocID, Frag_s, Frag_e, Highlight_s, Hignlight_e>
 \]
-\textit{DocID} records the document id of the corresponding document of the fragment. $Frag_s$ records the start offset of snippet in a document, and equals to \textit{offset}. $Frag_e$ is the end offset of the snippet, and equals to \textit{offset $+$ length}. $Highlight_s$ and $Highlight_e$ are two arraylists which hold one or more starting offsets and ending offsets of highlighted terms. In the example of Figure 2, $Highlight_s$ is recorded as $<\textit{offset}_1, \textit{offset}_2>$, and $Highlight_e$ is represented as $<\textit{offset}_1+length_1, \textit{offset}_2+length_2>$. This method of generating fragment is independent with snippet generation algorithms, hence snippet generated by any methods can be represented using such fragment form.
+\textit{DocID} records the document ID of the corresponding document of the fragment. $Frag_s$ records the start offset of snippet in a document, and equals to \textit{offset}. $Frag_e$ is the end offset of the snippet, and equals to \textit{offset $+$ length}. $Highlight_s$ and $Highlight_e$ are two arraylists which hold one or more starting offsets and ending offsets of highlighted terms. In the example of Figure 1, $Highlight_s$ is recorded as $[\textit{offset}_1, \textit{offset}_2]$, and $Highlight_e$ is represented as $[\textit{offset}_1+length_1, \textit{offset}_2+length_2]$. This method of generating fragment is independent with snippet generation algorithms, hence snippet generated by any methods can be represented using such fragment form. Caching fragments instead of the full snippets could reduce the size of cached items to a large extent, hence increasing the number of snippets in the cache and saving more computation cost.
+
+\begin{figure}[h]
+  \centering
+  % Requires \usepackage{graphicx}
+  \includegraphics[width=3in]{figure1.pdf}\\
+  \caption{Snippet processing and fragment processing
+  }\label{Figure 2}
+\end{figure}
+
+Figure 2 shows the snippet processing and the fragment processing handled by document servers. The traditional snippet processing consists of two phases: \texttt{document retrieval} and \texttt{snippet calculation}. After a pair of query and document ID is submitted to a document server, snippet cache is checked at first in the snippet processing. And a hit in snippet cache will save both the document retrieval and snippet calculation. In contrast, the fragment processing has three steps: \texttt{document retrieval}, \texttt{fragment calculation} and \texttt{snippet recovering}. In the case of fragment processing, we check fragment cache, and a miss in fragment cache will  be followed with a fragment calculating operation. Since only the position information of the snippet in a document is recorded in the fragment cache, a hit in fragment cache still needs the corresponding document to recover a full snippet. The recover operation simply extracts the substrings from a document and inserts the highlight labels by the position information recorded in the fragment. The overhead of recovering is low and can be neglected. As documents are used more frequently in the fragment processing, it may requires more document retrieval operations, which leads to more disk accesses. But the faster read speed of SSD will offset this weakness and guarantee the good performance of fragment processing. More requirements of documents also makes the document cache more important than it was in snippet processing.
 
 In our sandbox search engine (we will describe the setting later), the average size of snippet is 375 Bytes while that of fragment is only 49 Bytes. By using fragment to represent snippet, seven times or more items can be held within the same amount of cache space, which will increase the cache hit ratio. Thus, more reduplicate CPU computation operations can be skipped.
-Nevertheless, due to the succinct representation of fragment, document accessing is required each time a snippet is requested even if the corresponding fragment is found in the fragment cache . Therefore, the I/O latency will increase substantially if these corresponding documents are not cached as well. However, it is worth noticing that these documents are also popular documents themselves. In fact they may already cached in document cache (otherwise they will be fetched from the disk at the very first cache miss and inevitably will reside in the document cache). So there are almost no overhead for recovering the snippet from the fragment. Furthermore, the memory saved by using fragment cache can be reserved for caching more popular documents, which in turn improve the performance.
+Nevertheless, due to the succinct representation of fragment, document accessing is required each time a snippet is requested even if the corresponding fragment is found in the fragment cache. Therefore, the I/O latency will increase substantially if these corresponding documents are not cached as well. However, it is worth noticing that these documents are also popular documents themselves. In fact they may already cached in document cache (otherwise they will be fetched from the disk at the very first cache miss and inevitably will reside in the document cache). So there are almost no overhead for recovering the snippet from the fragment. Furthermore, the memory saved by using fragment cache can be reserved for caching more popular documents, which in turn improve the performance.
 
 \section{Performance Evaluation}
 We evaluate our fragment cache by comparing its snippet generation latency with that of snippet cache. We test both static and dynamic cache strategies.
