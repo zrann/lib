@@ -88,7 +88,7 @@ The using of SSD dramatically reduce the disk accessing cost of snippet processi
   \centering
   % Requires \usepackage{graphicx}
   \includegraphics[width=3in]{figure2-yinying.pdf}\\
-  \caption{Snippet structure
+  \caption{Snippet structure.
   }\label{Figure 1}
 \end{figure}
 
@@ -102,7 +102,7 @@ We introduce a new data structure called \textit{fragment} to record the informa
   \centering
   % Requires \usepackage{graphicx}
   \includegraphics[width=3in]{figure1.pdf}\\
-  \caption{Snippet processing and fragment processing
+  \caption{Snippet processing and fragment processing.
   }\label{Figure 2}
 \end{figure}
 
@@ -117,8 +117,31 @@ We evaluate our fragment cache by comparing its snippet generation latency with 
 In our experiments, we use a real collection of 12 million Web pages crawled by Sogou Labs\footnote{ http://www.sogou.com/labs/resources.html?v=1}. The experiments are performed by replaying real queries from Sogou search engine. The query log contains 2M queries. The first half is used as training set to warm the cache and the second half is used as test set. We deploy a Lucene\footnote{http://lucene.apache.org} based search engine, in which our fragment cache implementation is embedded. The server is a Intel Xeon E5645(@2 .4GHz) machine, with 12GB of main memory and Windows 7 SP1 installed. We carry out experiments on a 120GB OCZ Vertex-3 SSD. To verify the effectiveness of fragment cache on different storage mediums, we also perform some experiments on a 500GB WDC HDD (5400rpm).
 
 \subsection{Experimental results}
+To evaluate the performance of fragment cache comprehensively, fragment cache is tested with both static and dynamic cache strategies. For static cache, we test QTF (Query Term Frequency) and QTFDF \cite{1}; for dynamic cache, LRU (Least
+Recently Used) and LFU (Least Frequently Used) are tested. The policies mentioned above are used in both snippet (fragment) cache and document cache. In document server, memory is shared by snippet cache and document cache. We test
+snippet generation latency under the conditions of different number of snippets are cached. And the fragment cache is set at the same memory space with snippet cache.
+
+\begin{figure}[h]
+  \centering
+  % Requires \usepackage{graphicx}
+  \includegraphics[width=3in]{static.pdf}\\
+  \caption{Performance of static cache strategies (the cache size is in terms of snippets, $\times$1000).
+  }\label{Figure 3}
+\end{figure}
+
+\begin{figure}[h]
+  \centering
+  % Requires \usepackage{graphicx}
+  \includegraphics[width=3in]{dynamic.pdf}\\
+  \caption{Performance of dynamic cache strategies (the cache size is in terms of snippets, $\times$1000).
+  }\label{Figure 4}
+\end{figure}
+
+In static cache strategies, we fill the caches in document server using QTFDF and QTF according to training set. Figure 3 compares the performance of snippet cache and fragment cache. Snippet generation latency of QTFDF and QTF both declines when we allocate more memory to snippet cache. However the situation changes if fragment cache is used. Snippet generation latency decreases at first. However, when we allocate 60\% of memory to fragment cache, most of the popular fragments are cached. Allocating more memory to fragment cache does not improve its hit ratio remarkably, but results in more document cache misses which harms snippet generation latency. Therefore, when the ratio of fragment cache size to document cache size exceeds 6 : 4, the snippet generation latency goes up slowly as the ratio increases. We can conclude from Figure 2 that when the query stream contains many distinct snippets that can not be hold completely by snippet cache/fragment cache, fragment cache will show its performance advantage. Otherwise, you should choose snippet cache.
+
+Figure 4 shows the performance of fragment cache with dynamic cache strategies. In dynamic cache strategies, items can be dynamically admitted into the cache in both training process and testing process, cache efficiency can be improved anytime. Fragment cache performs much better than snippet cache with LRU, which is 26\% faster than snippet cache. While with LFU fragment cache performs not so well as that with LRU. LFU favors the old items because it deletes the least frequently used items when cache is full, making new document item hardly be inserted into cache. Fragment cache makes the situation worse and degrades the efficiency of document cache. In all, fragment cache performs not well enough in frequency-based cache strategy.
+
 \section{conclusion}
-\section{references}
 
 \bibliographystyle{abbrv}
 \bibliography{fc}
