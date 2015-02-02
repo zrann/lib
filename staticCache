@@ -43,9 +43,9 @@ public class StaticCache<K, V> extends Cache<K, V> {
 		// for the static cache, reject any new items if it is already full
 		if (node == null || isCacheFullPlusOneNode(node))	return;
 		
-		K key = node.key;
-		V value = node.value;
-		
+	//	K key = node.key;
+	//	V value = node.value;
+		node.value=null;
 		// then, insert it
 		this.insert(node);
 	}
