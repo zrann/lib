@@ -1,0 +1,78 @@
+package cache;
+
+import java.text.DecimalFormat;
+import java.util.HashMap;
+
+import searching.Search;
+import util.RAMEstimator;
+
+/**
+ * 	fill in, if full, reject any new items
+	so, have to decide which strategy to use by the program outside the cache, e.g., frequency-based
+	the static is only responsible for adimitting new items one by one until full
+	several strategies need to consider: frequency-based, frequency/size based, frequency*cost/size
+ * @author jgwang
+ *
+ * @param <K>
+ * @param <V>
+ */
+public class StaticCache<K, V> extends Cache<K, V> {
+	
+	public StaticCache(double memoryLimit) {
+		super(memoryLimit);
+	}
+
+	public CacheNode<K,V> getNode(K key) {
+		CacheNode<K,V> node = (CacheNode<K,V>) this.cache.get(key);
+		this.numOfLookups ++;
+		if (node != null) {
+			if (this.enableCounting){	// at the training phrase
+				this.remove(node);
+				node.increaseFrequency();
+				this.insert(node);
+			}
+//			Search.hitStringVector.add(key.toString());
+			this.numOfHits ++;
+			return node;
+		} else {	// it will insert to cache if needed and we update it frequency at the insert()
+			return null;
+		}
+	}
+
+	public void put(CacheNode<K,V> node) {
+		// for the static cache, reject any new items if it is already full
+		if (node == null || isCacheFullPlusOneNode(node))	return;
+		
+		K key = node.key;
+		V value = node.value;
+		
+		// then, insert it
+		this.insert(node);
+	}
+	
+	private void insert(CacheNode<K,V> node){
+		if (this.enableCounting){	// at the training phrase
+			node.increaseFrequency();	// set the frequency = 1 (initialization 0)
+		}
+		cache.put(node.key, node);
+		this.usedMemory_Byte += node.numOfBytes;
+	}
+	
+	public String toString(){
+		return this.cache.toString();
+	}
+
+	/**
+	 * @param args
+	 */
+	public static void main(String[] args) {
+		// TODO Auto-generated method stub
+
+	}
+
+	@Override
+	public void remove(CacheNode<K, V> node) {
+		this.cache.remove(node.key);
+	}
+
+}
